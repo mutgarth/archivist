@@ -280,3 +280,56 @@ pub fn playback(dir: &Dir, storage: &str, hash: &str) -> Result<()> {
         0.0,
     )
 }
+
+pub fn frame(dir: &Dir, storage: &str, hash: &str, at_ms: i64) -> Result<Vec<u8>> {
+    ensure!(at_ms >= 0, "invalid_frame_time");
+    dir.create_dir_all(".archivist/frames")?;
+    let path = format!(".archivist/frames/{hash}-{at_ms}.jpg");
+    derive(dir, storage, &path, false, at_ms as f64 / 1000.0)?;
+    media::read(dir, &path, true)
+}
+pub fn audio_chunk(dir: &Dir, storage: &str, start_ms: i64, length_ms: i64) -> Result<Vec<u8>> {
+    ensure!(
+        start_ms >= 0 && length_ms > 0 && length_ms <= 60000,
+        "invalid_audio_chunk"
+    );
+    let source = media::open(dir, storage, true)?;
+    let output = command("ffmpeg", "120")
+        .args([
+            "-v",
+            "error",
+            "-nostdin",
+            "-threads",
+            "2",
+            "-protocol_whitelist",
+            "file",
+            "-ss",
+            &(start_ms as f64 / 1000.0).to_string(),
+            "-f",
+            "mov",
+            "-i",
+            &fd_path(&source),
+            "-t",
+            &(length_ms as f64 / 1000.0).to_string(),
+            "-map",
+            "0:a:0",
+            "-vn",
+            "-ac",
+            "1",
+            "-ar",
+            "16000",
+            "-c:a",
+            "pcm_s16le",
+            "-f",
+            "wav",
+            "pipe:1",
+        ])
+        .output()?;
+    ensure!(
+        output.status.success()
+            && output.stdout.len() > 44
+            && output.stdout.len() < 4 * 1024 * 1024,
+        "audio_extraction_failed"
+    );
+    Ok(output.stdout)
+}

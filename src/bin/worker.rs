@@ -12,6 +12,7 @@ struct Job {
     storage_path: String,
     sha256: String,
     mime: String,
+    media_metadata: serde_json::Value,
 }
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -64,17 +65,37 @@ async fn main() -> Result<()> {
                 }
             })
             .await??;
-            let description = ai.describe(&preview).await?;
-            let description = if is_video {
-                format!("Quadro de prévia do vídeo (não representa todas as cenas): {description}")
+            let (segments, transcription_model) = if is_video {
+                archivist::timeline::analyze(
+                    &ai,
+                    &root,
+                    &job.storage_path,
+                    &job.sha256,
+                    &job.media_metadata,
+                )
+                .await?
             } else {
-                description
+                (vec![], None)
+            };
+            let description = if is_video {
+                let visuals = segments.iter().filter(|s| s.kind == "visual").count();
+                let speech = segments.iter().filter(|s| s.kind == "speech").count();
+                let first = segments
+                    .iter()
+                    .find(|s| s.kind == "visual")
+                    .map(|s| s.text.as_str())
+                    .unwrap_or("");
+                format!(
+                    "Análise temporal: {visuals} quadros amostrados e {speech} trechos de fala. Primeiro quadro: {first}"
+                )
+            } else {
+                ai.describe(&preview).await?
             };
             let embedding = ai.embed(&description, false).await?;
             Ok::<_, anyhow::Error>(
                 json!({"lease_token":job.lease_token,"attempt":job.attempt,"generation":job.generation,
      "description":description,"embedding":embedding,"embedding_model":ai.embedding_version,
-     "vision_model":ai.vision_version,"pipeline_version":if is_video {"video-poster-v1"} else {"image-v1"}}),
+     "vision_model":ai.vision_version,"segments":segments,"transcription_model":transcription_model,"pipeline_version":if is_video {"video-timeline-v1"} else {"image-v1"}}),
             )
         };
         tokio::pin!(result);

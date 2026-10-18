@@ -13,6 +13,7 @@ values={
 "VISION_VERSION":"gemma-4-E4B-it-Q4_K_M","EMBEDDING_MODEL":"archivist-embedding",
 "EMBEDDING_VERSION":"embeddinggemma-300m-qat-Q4_0","EMBEDDING_DIMENSION":"768",
 "MEDIA_VOLUME_ID":secrets.token_hex(16),"FFMPEG_BIN":"ffmpeg","FFPROBE_BIN":"ffprobe",
+"WHISPER_URL":"http://127.0.0.1:8092","WHISPER_MODEL":"whisper-large-v3-turbo",
 "RUST_LOG":"archivist=info"}
 # Shell and Compose both read this file; single quotes must be escaped.
 assert all("'" not in str(v) and "\n" not in str(v) for v in values.values()), "Unsupported quote/newline in configuration path"
@@ -29,7 +30,7 @@ else:marker.write_text(values["MEDIA_VOLUME_ID"]+"\n")
 assert path.stat().st_mode & 0o777 == 0o600
 print("Created .env (private). Keep it out of Git; see docs/12-executar.md.")
 
-worker_keys=['MEDIA_VOLUME_ID','FFMPEG_BIN','FFPROBE_BIN','MEDIA_ROOT', 'ARCHIVIST_URL', 'ARCHIVIST_WORKER_TOKEN', 'LMSTUDIO_URL', 'VISION_MODEL', 'VISION_VERSION', 'EMBEDDING_MODEL', 'EMBEDDING_VERSION', 'EMBEDDING_DIMENSION', 'RUST_LOG']
+worker_keys=['WHISPER_URL','WHISPER_MODEL','MEDIA_VOLUME_ID','FFMPEG_BIN','FFPROBE_BIN','MEDIA_ROOT', 'ARCHIVIST_URL', 'ARCHIVIST_WORKER_TOKEN', 'LMSTUDIO_URL', 'VISION_MODEL', 'VISION_VERSION', 'EMBEDDING_MODEL', 'EMBEDDING_VERSION', 'EMBEDDING_DIMENSION', 'RUST_LOG']
 with (root/".env.worker").open("x") as f:
  (root/".env.worker").chmod(0o600)
  f.write("".join(f"{k}='{values[k]}'\n" for k in worker_keys))

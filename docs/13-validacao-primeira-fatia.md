@@ -47,3 +47,7 @@ A arquitetura mantém domínio, mídia e IA em módulos próprios. Nesta primeir
 ## Vídeos
 
 A suíte inclui vídeo sintético, metadados, hash idêntico no download, Range, proteção de identidade do volume e derivado gerado pelo worker com IA offline. Rode node tests/video-browser.cjs com um vídeo já processado para validar reprodução, seek e layout móvel. O arquivo real usado na validação permanece privado em .local; não faz parte do repositório.
+
+## Busca temporal
+
+A evolução video-timeline-v1 acrescenta testes de offsets da transcrição, múltiplos momentos, limites dos segmentos, persistência atômica, reanálise sem perda da versão anterior e resultados com timestamp. Veja [análise temporal](15-analise-temporal.md) para configuração e reprodução dos testes de navegador.

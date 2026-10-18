@@ -90,6 +90,8 @@ As rotas `/api/v1` dispensam autenticação. Todas as rotas `/internal/v1` exige
 | GET /api/v1/imports/{id} | Registro da importação; processamento acompanhado pelos assets/jobs |
 | GET /api/v1/assets | limit 1–100, offset >= 0; items e next_offset |
 | GET /api/v1/assets/{id} | Descrição, modelos, dimensões e status/job_id |
+| GET /api/v1/assets/{id}/segments | Trechos temporais com texto, tipo e timestamps |
+| POST /api/v1/assets/{id}/reanalyze | Nova geração de análise para vídeo concluído/falho |
 | GET /api/v1/assets/{id}/preview | JPEG gerado sem IA |
 | GET /api/v1/assets/{id}/original | Original; Range simples; download pela rede privada |
 | POST /api/v1/search | query, limit e mode: hybrid ou text; items ordenados |
@@ -101,7 +103,7 @@ As rotas `/api/v1` dispensam autenticação. Todas as rotas `/internal/v1` exige
 | POST /internal/v1/jobs/{id}/fail | Registra falha; até 3 tentativas com espera de 30 s |
 | GET /health/live e /health/ready | Processo e disponibilidade de banco/raiz de mídia |
 
-A lista explícita de arquivos substitui batch_path nesta fatia; paginação usa offset, sem cursor. Sem upload web, filtros de categoria, PATCH humano ou rota de reanálise. Retry e fail não têm o contrato completo de Idempotency-Key planejado: repetição após mudança de estado pode retornar conflito. Reserva perdida é recuperada após lease expirar, não por chave de requisição. São diferenças explícitas em relação ao [rascunho futuro](04-api-draft.md).
+A lista explícita de arquivos substitui batch_path nesta fatia; paginação usa offset, sem cursor. Sem upload web, filtros de categoria, edição manual de descrições ou trechos. Retry e fail não têm o contrato completo de Idempotency-Key planejado: repetição após mudança de estado pode retornar conflito. Reserva perdida é recuperada após lease expirar, não por chave de requisição. São diferenças explícitas em relação ao [rascunho futuro](04-api-draft.md).
 
 A busca semântica retorna os vizinhos disponíveis, mesmo com baixa relevância; não há limiar calibrado. Scores de fusão de rankings não representam confiança. O índice consulta apenas a versão de embedding configurada, evitando misturar versões.
 
@@ -112,3 +114,5 @@ Um worker processa uma imagem por vez e renova a lease a cada 30 s. Se morrer, a
 Parar os processos não apaga dados. `docker compose -p archivist stop` para o banco preserva o volume. **Não usar down -v em um acervo que precise preservar.** Backup deve incluir mídia gerenciada e banco; restauração e rotina de backup ainda não foram implementadas.
 
 Para vídeos, dependências adicionais, identidade do volume e futura montagem de NAS, consulte [vídeos e armazenamento](14-videos-armazenamento.md).
+
+Para descrição de múltiplos momentos, Whisper local e busca com timestamps, consulte [análise temporal](15-analise-temporal.md).

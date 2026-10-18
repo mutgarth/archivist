@@ -105,12 +105,17 @@ fn routes(s: App) -> Router {
         .route("/api/v1/assets/{id}/preview", get(preview))
         .route("/api/v1/assets/{id}/original", get(original))
         .route("/api/v1/assets/{id}/playback", get(playback))
+        .route("/api/v1/assets/{id}/segments", get(segments))
+        .route("/api/v1/assets/{id}/reanalyze", post(reanalyze))
         .route("/api/v1/search", post(search))
         .route("/api/v1/jobs/{id}", get(job))
         .route("/api/v1/jobs/{id}/retry", post(retry))
         .route("/internal/v1/jobs/reserve", post(reserve))
         .route("/internal/v1/jobs/{id}/renew", post(renew))
-        .route("/internal/v1/jobs/{id}/complete", post(complete))
+        .route(
+            "/internal/v1/jobs/{id}/complete",
+            post(complete).layer(DefaultBodyLimit::max(64 * 1024 * 1024)),
+        )
         .route("/internal/v1/jobs/{id}/fail", post(fail))
         .route_layer(middleware::from_fn_with_state(s.clone(), auth));
     Router::new()
@@ -284,7 +289,7 @@ async fn get_import(State(s): State<App>, Path(id): Path<Uuid>) -> Api<Json<Valu
             .ok_or_else(missing)?,
     ))
 }
-const ASSET_JSON: &str = "jsonb_build_object('id',a.id,'name',a.source_path,'mime',a.mime,'sha256',a.sha256,'media_metadata',a.media_metadata,'bytes',a.bytes,'width',a.width,'height',a.height,'description',a.description,'vision_model',a.vision_model,'embedding_model',a.embedding_model,'pipeline_version',a.pipeline_version,'job_id',j.id,'status',j.state,'error',j.error)";
+const ASSET_JSON: &str = "jsonb_build_object('id',a.id,'name',a.source_path,'mime',a.mime,'sha256',a.sha256,'media_metadata',a.media_metadata,'bytes',a.bytes,'width',a.width,'height',a.height,'description',a.description,'vision_model',a.vision_model,'embedding_model',a.embedding_model,'pipeline_version',a.pipeline_version,'transcription_model',a.transcription_model,'job_id',j.id,'status',j.state,'error',j.error)";
 #[derive(Deserialize)]
 struct Page {
     limit: Option<i64>,
@@ -473,37 +478,47 @@ async fn search(State(s): State<App>, Json(input): Json<Search>) -> Api<Json<Val
         .try_acquire()
         .map_err(|_| Error(StatusCode::TOO_MANY_REQUESTS, "search_busy"))?;
     let mode = input.mode.as_deref().unwrap_or("hybrid");
-    if mode == "text" {
-        let q = format!(
-            "SELECT {ASSET_JSON} FROM assets a JOIN jobs j ON j.asset_id=a.id WHERE to_tsvector('portuguese',a.source_path || ' ' || coalesce(a.description,'')) @@ plainto_tsquery('portuguese',$1) ORDER BY a.created_at DESC LIMIT $2"
-        );
-        let items: Vec<Value> = sqlx::query_scalar(&q)
-            .bind(text)
-            .bind(limit)
-            .fetch_all(&s.db)
-            .await?;
-        return Ok(Json(json!({"items":items,"mode":"text"})));
-    }
-    if mode != "hybrid" {
+    if !matches!(mode, "text" | "hybrid") {
         return Err(bad());
     }
-    let vector = s.ai.embed(text, true).await.map_err(|_| {
-        Error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "embedding_unavailable_use_text",
-        )
-    })?;
-    let q = format!(
-        "WITH semantic AS (SELECT id,row_number() OVER(ORDER BY embedding <=> $1) AS rank FROM assets WHERE embedding_model=$2 AND embedding IS NOT NULL ORDER BY embedding <=> $1 LIMIT 100), lexical AS (SELECT id,row_number() OVER(ORDER BY ts_rank_cd(to_tsvector('portuguese',source_path || ' ' || coalesce(description,'')),plainto_tsquery('portuguese',$3)) DESC) AS rank FROM assets WHERE to_tsvector('portuguese',source_path || ' ' || coalesce(description,'')) @@ plainto_tsquery('portuguese',$3) LIMIT 100), scores AS (SELECT coalesce(s.id,l.id) AS id,coalesce(1.0/(60+s.rank),0)+coalesce(1.0/(60+l.rank),0) AS score FROM semantic s FULL JOIN lexical l ON l.id=s.id) SELECT {ASSET_JSON} || jsonb_build_object('score',scores.score) FROM scores JOIN assets a ON a.id=scores.id JOIN jobs j ON j.asset_id=a.id ORDER BY scores.score DESC,a.id LIMIT $4"
-    );
+    let vector = if mode == "hybrid" {
+        Some(pgvector::Vector::from(
+            s.ai.embed(text, true).await.map_err(|_| {
+                Error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "embedding_unavailable_use_text",
+                )
+            })?,
+        ))
+    } else {
+        None
+    };
+    let q=format!("WITH documents AS (
+        SELECT a.id AS key,a.id AS asset_id,NULL::text AS kind,NULL::bigint AS start_ms,NULL::bigint AS end_ms,coalesce(a.description,'') AS excerpt,a.source_path||' '||coalesce(a.description,'') AS body,a.embedding,a.embedding_model
+        FROM assets a WHERE NOT EXISTS(SELECT 1 FROM asset_segments seg WHERE seg.asset_id=a.id)
+        UNION ALL
+        SELECT seg.id,seg.asset_id,seg.kind,seg.start_ms,seg.end_ms,seg.text,a.source_path||' '||seg.text,seg.embedding,seg.embedding_model FROM asset_segments seg JOIN assets a ON a.id=seg.asset_id
+    ), lexical AS (
+        SELECT key,row_number() OVER(ORDER BY ts_rank_cd(to_tsvector('portuguese',body),plainto_tsquery('portuguese',$3)) DESC,key) AS rank
+        FROM documents WHERE to_tsvector('portuguese',body) @@ plainto_tsquery('portuguese',$3)
+    ), semantic AS (
+        SELECT key,row_number() OVER(ORDER BY embedding <=> $1::vector,key) AS rank FROM documents WHERE $1::vector IS NOT NULL AND embedding_model=$2 AND embedding IS NOT NULL ORDER BY embedding <=> $1::vector,key LIMIT 300
+    ), scores AS (
+        SELECT coalesce(l.key,s.key) AS key,coalesce(1.0/(60+l.rank),0)+coalesce(1.0/(60+s.rank),0) AS score FROM lexical l FULL JOIN semantic s ON s.key=l.key
+    ), ranked AS (
+        SELECT d.*,scores.score,row_number() OVER(PARTITION BY d.asset_id ORDER BY scores.score DESC,d.start_ms NULLS FIRST,d.key) AS asset_rank FROM scores JOIN documents d ON d.key=scores.key
+    )
+    SELECT {ASSET_JSON} || jsonb_build_object('score',ranked.score,'match',CASE WHEN ranked.kind IS NULL THEN NULL ELSE jsonb_build_object('kind',ranked.kind,'start_ms',ranked.start_ms,'end_ms',ranked.end_ms,'text',ranked.excerpt) END)
+    FROM ranked JOIN assets a ON a.id=ranked.asset_id JOIN jobs j ON j.asset_id=a.id
+    WHERE ranked.asset_rank<=3 ORDER BY ranked.score DESC,a.id,ranked.start_ms NULLS FIRST LIMIT $4");
     let items: Vec<Value> = sqlx::query_scalar(&q)
-        .bind(pgvector::Vector::from(vector))
+        .bind(vector)
         .bind(&s.ai.embedding_version)
         .bind(text)
         .bind(limit)
         .fetch_all(&s.db)
         .await?;
-    Ok(Json(json!({"items":items,"mode":"hybrid"})))
+    Ok(Json(json!({"items":items,"mode":mode})))
 }
 async fn job(State(s): State<App>, Path(id): Path<Uuid>) -> Api<Json<Value>> {
     Ok(Json(sqlx::query_scalar("SELECT jsonb_build_object('id',id,'asset_id',asset_id,'status',state,'attempt',attempt,'error',error) FROM jobs WHERE id=$1").bind(id).fetch_optional(&s.db).await?.ok_or_else(missing)?))
@@ -517,7 +532,7 @@ async fn retry(State(s): State<App>, Path(id): Path<Uuid>) -> Api<(StatusCode, J
 }
 async fn reserve(State(s): State<App>) -> Api<Response> {
     sqlx::query("UPDATE jobs SET state='failed',error='attempts_exhausted' WHERE state='running' AND lease_expires_at<now() AND attempt>=3").execute(&s.db).await?;
-    let row:Option<Value>=sqlx::query_scalar("WITH candidate AS (SELECT id FROM jobs WHERE attempt<3 AND ((state='queued' AND available_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs j SET state='running',attempt=attempt+1,lease_token=$1,lease_expires_at=now()+interval '120 seconds' FROM candidate c WHERE j.id=c.id RETURNING j.*) SELECT jsonb_build_object('id',j.id,'asset_id',j.asset_id,'generation',j.generation,'attempt',j.attempt,'lease_token',j.lease_token,'storage_path',a.storage_path,'sha256',a.sha256,'mime',a.mime) FROM claimed j JOIN assets a ON a.id=j.asset_id")
+    let row:Option<Value>=sqlx::query_scalar("WITH candidate AS (SELECT id FROM jobs WHERE attempt<3 AND ((state='queued' AND available_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs j SET state='running',attempt=attempt+1,lease_token=$1,lease_expires_at=now()+interval '120 seconds' FROM candidate c WHERE j.id=c.id RETURNING j.*) SELECT jsonb_build_object('id',j.id,'asset_id',j.asset_id,'generation',j.generation,'attempt',j.attempt,'lease_token',j.lease_token,'storage_path',a.storage_path,'sha256',a.sha256,'mime',a.mime,'media_metadata',a.media_metadata) FROM claimed j JOIN assets a ON a.id=j.asset_id")
  .bind(Uuid::new_v4()).fetch_optional(&s.db).await?;
     Ok(match row {
         Some(value) => Json(value).into_response(),
@@ -552,6 +567,10 @@ struct Completed {
     embedding_model: String,
     vision_model: String,
     pipeline_version: String,
+    #[serde(default)]
+    segments: Vec<crate::timeline::Segment>,
+    #[serde(default)]
+    transcription_model: Option<String>,
 }
 async fn complete(
     State(s): State<App>,
@@ -563,8 +582,20 @@ async fn complete(
         || v.description.len() > 8000
         || v.embedding_model != s.ai.embedding_version
         || v.vision_model != s.ai.vision_version
-        || !matches!(v.pipeline_version.as_str(), "image-v1" | "video-poster-v1")
+        || !matches!(
+            v.pipeline_version.as_str(),
+            "image-v1" | "video-poster-v1" | "video-timeline-v1"
+        )
     {
+        return Err(bad());
+    }
+    if v.transcription_model
+        .as_ref()
+        .is_some_and(|s| s.is_empty() || s.len() > 200)
+    {
+        return Err(bad());
+    }
+    if v.pipeline_version != "video-timeline-v1" && !v.segments.is_empty() {
         return Err(bad());
     }
     let fingerprint = hash(&serde_json::to_vec(&v).map_err(|_| bad())?);
@@ -592,6 +623,44 @@ async fn complete(
     {
         return Err(conflict());
     }
+    let asset_id = row.get::<Uuid, _>("asset_id");
+    let asset = sqlx::query("SELECT mime,media_metadata FROM assets WHERE id=$1")
+        .bind(asset_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if v.pipeline_version == "video-timeline-v1" {
+        if !asset.get::<String, _>("mime").starts_with("video/") {
+            return Err(bad());
+        }
+        let metadata: Value = asset.get("media_metadata");
+        let duration = (metadata["format"]["duration"]
+            .as_str()
+            .ok_or_else(bad)?
+            .parse::<f64>()
+            .map_err(|_| bad())?
+            * 1000.0)
+            .round() as i64;
+        crate::timeline::validate(&v.segments, duration, s.ai.dimension).map_err(|_| bad())?;
+        let has_audio = metadata["streams"]
+            .as_array()
+            .is_some_and(|streams| streams.iter().any(|s| s["codec_type"] == "audio"));
+        if has_audio && v.transcription_model.is_none() {
+            return Err(bad());
+        }
+    }
+    sqlx::query("DELETE FROM asset_segments WHERE asset_id=$1")
+        .bind(asset_id)
+        .execute(&mut *tx)
+        .await?;
+    for segment in &v.segments {
+        sqlx::query("INSERT INTO asset_segments(id,asset_id,generation,kind,start_ms,end_ms,text,embedding,embedding_model) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+            .bind(Uuid::new_v4()).bind(asset_id).bind(v.generation).bind(&segment.kind).bind(segment.start_ms).bind(segment.end_ms).bind(&segment.text).bind(pgvector::Vector::from(segment.embedding.clone())).bind(&v.embedding_model).execute(&mut *tx).await?;
+    }
+    sqlx::query("UPDATE assets SET transcription_model=$1 WHERE id=$2")
+        .bind(&v.transcription_model)
+        .bind(asset_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("UPDATE assets SET description=$1,embedding=$2,embedding_model=$3,vision_model=$4,pipeline_version=$5,updated_at=now() WHERE id=$6")
  .bind(v.description).bind(pgvector::Vector::from(v.embedding)).bind(v.embedding_model).bind(v.vision_model).bind(v.pipeline_version).bind(row.get::<Uuid,_>("asset_id")).execute(&mut *tx).await?;
     sqlx::query("UPDATE jobs SET state='completed',result_hash=$1,error=NULL WHERE id=$2")
@@ -613,4 +682,30 @@ async fn fail(
         return Err(conflict());
     }
     Ok(Json(json!({"status":"recorded"})))
+}
+
+async fn segments(State(s): State<App>, Path(id): Path<Uuid>) -> Api<Json<Value>> {
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assets WHERE id=$1)")
+        .bind(id)
+        .fetch_one(&s.db)
+        .await?;
+    if !exists {
+        return Err(missing());
+    }
+    let items:Vec<Value>=sqlx::query_scalar("SELECT jsonb_build_object('id',id,'kind',kind,'start_ms',start_ms,'end_ms',end_ms,'text',text) FROM asset_segments WHERE asset_id=$1 ORDER BY start_ms,kind,id").bind(id).fetch_all(&s.db).await?;
+    Ok(Json(json!({"items":items})))
+}
+async fn reanalyze(State(s): State<App>, Path(id): Path<Uuid>) -> Api<(StatusCode, Json<Value>)> {
+    let mime: Option<String> = sqlx::query_scalar("SELECT mime FROM assets WHERE id=$1")
+        .bind(id)
+        .fetch_optional(&s.db)
+        .await?;
+    if !mime.ok_or_else(missing)?.starts_with("video/") {
+        return Err(bad());
+    }
+    let n=sqlx::query("UPDATE jobs SET state='queued',generation=generation+1,attempt=0,lease_token=NULL,lease_expires_at=NULL,result_hash=NULL,error=NULL,available_at=now() WHERE asset_id=$1 AND state IN ('completed','failed')").bind(id).execute(&s.db).await?.rows_affected();
+    if n == 0 {
+        return Err(conflict());
+    }
+    Ok((StatusCode::ACCEPTED, Json(json!({"status":"queued"}))))
 }

@@ -2,11 +2,11 @@
 
 Gerenciador de mídia auto-hospedado e multiusuário, com preservação de vídeos originais, descrição local de prévias e busca semântica.
 
-**Fatia experimental implementada:** importar imagens e vídeos já copiados → preservar original → gerar prévia → descrever via LM Studio → gerar embedding textual → buscar, visualizar e baixar o original. Vídeos têm reprodução por derivado separado; a descrição considera somente um quadro.
+**Fatia experimental implementada:** importar imagens e vídeos já copiados → preservar original → gerar prévia → descrever via LM Studio → gerar embedding textual → buscar, visualizar e baixar o original. Vídeos têm reprodução por derivado separado, descrições de múltiplos momentos e transcrição local com busca por trechos.
 
 ## Executar
 
-Requer Linux, FFmpeg/FFprobe com suporte a scale/reset_sar, Rust 1.88+, Python 3, Docker Compose e [LM Studio](https://lmstudio.ai/docs/developer) com modelos de visão e embedding. A interface é servida pelo próprio binário Rust; não exige Node para uso.
+Requer Linux, FFmpeg/FFprobe com suporte a scale/reset_sar, Rust 1.88+, Python 3, Docker Compose e [LM Studio](https://lmstudio.ai/docs/developer) com modelos de visão e embedding, além de Whisper local para vídeos com áudio. A interface é servida pelo próprio binário Rust; não exige Node para uso.
 
 ```sh
 git clone https://github.com/mutgarth/archivist.git
@@ -65,3 +65,7 @@ Segredos, dados de execução e material privado ficam fora do Git. Licença de 
 ## Vídeos
 
 MP4, MOV e M4V com original verificado por SHA-256, thumbnail e derivado de reprodução separado. Veja [vídeos e armazenamento](docs/14-videos-armazenamento.md) para configuração, limites e migração futura para uma pasta montada do TrueNAS.
+
+## Busca por trechos
+
+Quadros amostrados e fala transcrita recebem timestamps e embeddings próprios. Os resultados abrem a prévia no ponto encontrado. Consulte [análise temporal](docs/15-analise-temporal.md) para configurar o Whisper, reanalisar vídeos existentes e conhecer limites.

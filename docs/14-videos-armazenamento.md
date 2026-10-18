@@ -8,7 +8,7 @@ Limites: 20 arquivos por lote; imagens até 20 MB; vídeos até 64 GiB, 24 horas
 
 A primeira imagem de prévia é extraída perto do início. O worker verifica novamente o hash e cria um MP4 de reprodução com H.264/AAC, limitado a 1280 × 720, CRF 25 e faststart. Esse derivado é comprimido; **nunca substitui o original**. HDR não tem tone mapping calibrado nesta fatia; use o original para avaliação de cor ou edição. O derivado respeita a rotação reconhecida pelo FFmpeg; metadados técnicos do catálogo descrevem o original.
 
-A descrição e o embedding usam somente a imagem de prévia, com essa limitação identificada na interface e pipeline_version video-poster-v1. Não há transcrição, indexação temporal ou descrição de todas as cenas. A reprodução fica disponível mesmo se a IA estiver offline, depois de terminar a conversão. Enquanto isso, o original já pode ser baixado.
+A análise atual usa múltiplos quadros e transcrição local com timestamps, descrita em [análise temporal](15-analise-temporal.md). Vídeos indexados com video-poster-v1 podem ser atualizados pelo botão Reanalisar vídeo. O original não é modificado. A reprodução continua disponível independentemente da análise de IA.
 
 ## Dependências
 

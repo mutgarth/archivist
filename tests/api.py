@@ -108,6 +108,38 @@ marker.write_text("test-volume")
 assert call("/health/ready")[0]==200
 print("PASS: video import, metadata, original hash, preview, ranges and missing/wrong volume protection.")
 
+# Segment completion is atomic; text search returns the exact speech timestamp.
+assert call("/api/v1/assets/"+video+"/reanalyze",{})[0]==409
+# Keep the earlier recovery fixture out of this reservation.
+sql("UPDATE jobs SET state='failed' WHERE asset_id!='"+video+"' AND state='queued'")
+status,vjob=parsed("/internal/v1/jobs/reserve",{},token=WORKER);assert status==200
+vresult={**result,"lease_token":vjob["lease_token"],"attempt":vjob["attempt"],"generation":vjob["generation"],"pipeline_version":"video-timeline-v1","description":"Vídeo sintético.","transcription_model":"test-whisper","segments":[
+ {"kind":"visual","start_ms":500,"end_ms":501,"text":"Quadro azul.","embedding":[0.1]*int(os.environ["EMBEDDING_DIMENSION"])},
+ {"kind":"speech","start_ms":200,"end_ms":800,"text":"Encontramos uma borboleta amarela.","embedding":[0.2]*int(os.environ["EMBEDDING_DIMENSION"])}
+]}
+assert call("/internal/v1/jobs/"+vjob["id"]+"/complete",{**vresult,"segments":[{**vresult["segments"][0],"end_ms":2000}]},token=WORKER)[0]==400
+oversized={**vresult,"segments":[vresult["segments"][0]]*40+[{**vresult["segments"][1],"embedding":[0]}]}
+assert len(json.dumps(oversized).encode())>128*1024
+assert call("/internal/v1/jobs/"+vjob["id"]+"/complete",oversized,token=WORKER)[0]==400
+assert parsed("/api/v1/assets/"+video+"/segments")[1]["items"]==[]
+assert call("/internal/v1/jobs/"+vjob["id"]+"/complete",vresult,token=WORKER)[0]==200
+assert call("/internal/v1/jobs/"+vjob["id"]+"/complete",vresult,token=WORKER)[0]==200
+segments=parsed("/api/v1/assets/"+video+"/segments")[1]["items"]
+assert len(segments)==2
+hits=parsed("/api/v1/search",{"query":"borboleta","mode":"text"})[1]["items"]
+assert hits[0]["id"]==video and hits[0]["match"]["start_ms"]==200 and hits[0]["match"]["kind"]=="speech"
+assert call("/api/v1/assets/"+video+"/reanalyze",{})[0]==202
+assert len(parsed("/api/v1/assets/"+video+"/segments")[1]["items"])==2
+assert call("/internal/v1/jobs/"+vjob["id"]+"/complete",vresult,token=WORKER)[0]==409
+status,next_job=parsed("/internal/v1/jobs/reserve",{},token=WORKER);assert status==200
+next_result={**vresult,"lease_token":next_job["lease_token"],"attempt":next_job["attempt"],"generation":next_job["generation"]}
+assert call("/internal/v1/jobs/"+next_job["id"]+"/complete",{**next_result,"segments":[{**vresult["segments"][0],"embedding":[0]}]},token=WORKER)[0]==400
+assert len(parsed("/api/v1/assets/"+video+"/segments")[1]["items"])==2
+assert call("/internal/v1/jobs/"+next_job["id"]+"/complete",next_result,token=WORKER)[0]==200
+assert len(parsed("/api/v1/assets/"+video+"/segments")[1]["items"])==2
+assert call("/api/v1/assets/"+video+"/reanalyze",{})[0]==202
+print("PASS: atomic timestamped segments, exact lexical match, reanalysis and stale completion rejection.")
+
 # Real worker generates a playable proxy even when the AI endpoint is offline.
 import subprocess,time
 worker_env={k:v for k,v in os.environ.items() if k in {
