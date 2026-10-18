@@ -1,6 +1,6 @@
 # Documentação
 
-Todos os documentos descrevem intenção e contratos propostos, salvo indicação explícita de fato verificado.
+A primeira fatia está implementada. Comece pelo [guia de execução](12-executar.md) e pela [validação](13-validacao-primeira-fatia.md). Os documentos iniciais registram a direção mais ampla e não significam que todas as funcionalidades estejam prontas.
 
 1. [Visão e requisitos](01-visao.md)
 2. [Arquitetura e fronteiras](02-arquitetura.md)
@@ -14,3 +14,6 @@ Todos os documentos descrevem intenção e contratos propostos, salvo indicaçã
 10. [Referências oficiais](11-referencias.md)
 
 Convenções: **aceito** é direção acordada; **proposto** exige implementação/validação; **pendente** não está decidido; **verificado** exige evidência reproduzível. Datas de consulta de documentação não são resultados de testes do produto.
+
+11. [Executar a primeira fatia](12-executar.md)
+12. [Validação da primeira fatia](13-validacao-primeira-fatia.md)

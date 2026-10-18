@@ -1,5 +1,7 @@
 # API — DRAFT, não implementada
 
+> Direção de produto e plano inicial. Para o estado implementado da primeira fatia, consulte [execução](12-executar.md) e [validação](13-validacao-primeira-fatia.md).
+
 Prefixo público `/api/v1`. JSON UTF-8. IDs opacos, datas UTC ISO 8601 e timestamps de mídia em milissegundos. Autenticação individual obrigatória; mecanismo de sessão ainda pendente. Se usar cookies, incluir proteção CSRF. TLS e autorização por recurso mesmo na rede privada.
 
 | Método e rota | Contrato proposto |

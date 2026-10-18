@@ -1,6 +1,8 @@
 # Roteiro de entrega do serviço
 
-Etapas futuras em ordem; este repositório entrega apenas a etapa 0.
+> Direção de produto e plano inicial. Para o estado implementado da primeira fatia, consulte [execução](12-executar.md) e [validação](13-validacao-primeira-fatia.md).
+
+Etapas futuras em ordem; o guia de execução registra a fatia disponível.
 
 ## 0. Documentar
 

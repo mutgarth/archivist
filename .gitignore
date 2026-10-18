@@ -22,3 +22,6 @@
 
 # Planejamento privado; nunca publicar com git add -f
 /private/
+
+# Python verification caches
+__pycache__/

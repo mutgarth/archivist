@@ -1,5 +1,7 @@
 # Infraestrutura e implantação
 
+> Direção de produto e plano inicial. Para o estado implementado da primeira fatia, consulte [execução](12-executar.md) e [validação](13-validacao-primeira-fatia.md).
+
 Plano técnico; implantação ainda não implementada ou validada.
 
 ## Dependências do serviço

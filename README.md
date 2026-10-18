@@ -1,29 +1,61 @@
 # Archivist
 
-Gerenciador de mídia auto-hospedado para múltiplos usuários, com catálogo compartilhado, organização e busca semântica local. O número de usuários não é fixado pelo produto; limites de capacidade dependem de validação.
+Gerenciador de mídia auto-hospedado e multiusuário, com descrição local de imagens e busca semântica.
 
-**Estado: documentação inicial; aplicação, API, banco e infraestrutura ainda não implementados.** Ainda não há versão executável para baixar e testar. A entrega funcional deverá incluir instruções reproduzíveis de instalação, configuração e teste com dados de exemplo.
+**Primeira fatia experimental implementada:** importar PNG/JPEG/WebP já copiados → gerar prévia → descrever via LM Studio → gerar embedding textual → persistir no PostgreSQL/pgvector → buscar e visualizar → baixar original.
 
-O Archivist deverá armazenar referências aos originais, catalogar, organizar em coleções, descrever imagens, transcrever áudio/vídeo, pesquisar texto e vetores, mostrar prévias e permitir baixar originais. A edição de vídeo acontece em ferramentas externas: não haverá timeline, cortes ou renderização de edição.
+## Executar
 
-## Comece aqui
+Requer Rust 1.88+, Python 3, Docker Compose e [LM Studio](https://lmstudio.ai/docs/developer) com modelos de visão e embedding. A interface é servida pelo próprio binário Rust; não exige Node para uso.
 
-- [Índice da documentação](docs/README.md)
-- [Visão, requisitos e limites](docs/01-visao.md)
-- [Arquitetura](docs/02-arquitetura.md)
-- [Roteiro de entrega](docs/07-entrega.md)
-- [Decisões e pendências](docs/08-decisoes.md)
+```sh
+git clone https://github.com/mutgarth/archivist.git
+cd archivist
+python3 scripts/configure.py
+docker compose -p archivist up -d db
+cargo build --locked --bins
+```
 
-Primeira fatia planejada: **importar imagem → descrição local → embedding textual → persistência → busca → visualização**. Busca vetorial faz parte dessa primeira fatia.
+Siga o [guia de execução](docs/12-executar.md) para carregar os modelos, iniciar servidor/worker, obter a chave individual e importar os exemplos sintéticos. O serviço abre em `http://127.0.0.1:8098`. Em servidor remoto, use túnel SSH ou um proxy HTTPS; não envie chaves por HTTP aberto.
 
-## Direção técnica
+## O que funciona
 
-Rust modular, dois executáveis planejados (servidor e worker), Axum/Tokio e PostgreSQL com pgvector como baseline proposto. Fila persistente no banco, sem Redis. Rust coordena ferramentas de mídia e inferência existentes. O servidor é o único escritor do banco; o worker recebe tarefas por API interna autenticada.
+- Catálogo compartilhado por contas individuais, com chaves de acesso separadas.
+- Importação explícita de até 20 imagens por lote; confirmação do término da cópia.
+- PNG, JPEG e WebP até 20 MB e 40 megapixels por imagem.
+- Snapshot estável do original e prévia JPEG, sem depender da IA.
+- Worker separado via API autenticada, fila no PostgreSQL, heartbeat, tentativas limitadas e conclusão idempotente.
+- Descrição local com Gemma 4 E4B e embeddings textuais com EmbeddingGemma pelo LM Studio.
+- Busca híbrida por fusão de rankings textual/vetorial; modo somente texto quando a IA está offline.
+- Visualização, status da análise, tentativa manual após falha e download com Range simples.
 
-Originais em diretório de mídia; catálogo e correções no banco. A aplicação deve ser portátil, sem dependência de APIs específicas do TrueNAS.
+O catálogo é compartilhado entre todos os usuários configurados. Não há acervos privados por usuário nesta versão. A quantidade de usuários não é fixada; capacidade ainda não foi medida.
 
-## Conteúdo deste repositório
+## Testar
 
-Apenas documentação e configuração de edição/Git. Não há backend, containers executáveis, migrações, modelos baixados ou testes de aplicação. O [plano de validação](docs/09-validacao.md) descreve testes futuros, sem alegar execução.
+```sh
+cargo fmt --check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test --locked
+python3 scripts/test.py
+```
 
-Não incluir mídias pessoais, credenciais, endereços privados ou dumps. Configurações reais ficam fora do Git. A licença de distribuição permanece a decidir; repositório público não implica uma licença de código aberto.
+O último comando cria um banco e mídia descartáveis, testa a API com IA propositalmente offline e remove o banco criado. O banco do serviço fica intacto. Consulte [validação e limites](docs/13-validacao-primeira-fatia.md).
+
+## Estrutura
+
+- `src/domain.rs`: invariantes de caminhos e vetores.
+- `src/media.rs`: acesso restrito à raiz, inspeção e snapshots.
+- `src/ai.rs`: cliente LM Studio e validação da saída.
+- `src/server.rs`: casos de uso da fatia, persistência e adaptador HTTP.
+- `src/bin/`: servidor e worker.
+- `migrations/`, `web/`, `tests/`: banco, interface e verificações.
+- [Documentação e decisões](docs/README.md).
+
+## Limites atuais
+
+Áudio/vídeo, coleções, categorias, correções humanas, reanálise por modelo e instalação empacotada em container ainda não estão implementados. A arquitetura completa está documentada como direção futura; as rotas disponíveis estão no [contrato implementado](docs/12-executar.md).
+
+Edição de vídeo fica fora do produto: nenhum corte, timeline ou render de edição. A primeira fatia não instala NAS, não formata discos e não configura backup. Não há benchmark de qualidade ou capacidade; descrições podem errar.
+
+Segredos, dados de execução e material privado ficam fora do Git. Licença de distribuição ainda a definir; visibilidade pública não equivale a uma licença de código aberto.

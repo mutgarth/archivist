@@ -1,6 +1,8 @@
 # Plano de validação
 
-**Planejado; testes de aplicação não executados.** Não existe código Rust nesta entrega. A revisão documental verifica links, consistência, ausência de segredos e estado Git.
+> Direção de produto e plano inicial. Para o estado implementado da primeira fatia, consulte [execução](12-executar.md) e [validação](13-validacao-primeira-fatia.md).
+
+**Plano abrangente de validação.** A cobertura já executada da primeira fatia está em [validação da implementação](13-validacao-primeira-fatia.md); os demais casos continuam pendentes.
 
 | Área | Caso | Evidência de aprovação futura |
 | --- | --- | --- |

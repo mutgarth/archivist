@@ -1,5 +1,7 @@
 # Visão e requisitos
 
+> Direção de produto e plano inicial. Para o estado implementado da primeira fatia, consulte [execução](12-executar.md) e [validação](13-validacao-primeira-fatia.md).
+
 ## Problema e fluxo
 
 Usuários precisam encontrar e reutilizar arquivos em um catálogo compartilhado. O sistema oferece contas individuais e acesso multiusuário, sem fixar quantidade de pessoas. Capacidade e concorrência serão medidas antes de declarar limites suportados.

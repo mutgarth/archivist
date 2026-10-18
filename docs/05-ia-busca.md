@@ -1,5 +1,7 @@
 # Pipeline de IA e busca
 
+> Direção de produto e plano inicial. Para o estado implementado da primeira fatia, consulte [execução](12-executar.md) e [validação](13-validacao-primeira-fatia.md).
+
 ## Primeira fatia: imagem
 
 Importação confirmada → formato validado → asset persistido → descrição e tags locais → embedding do texto → persistência versionada → busca híbrida → prévia/detalhe/original.

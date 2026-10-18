@@ -1,5 +1,7 @@
 # Arquitetura proposta
 
+> Direção de produto e plano inicial. Para o estado implementado da primeira fatia, consulte [execução](12-executar.md) e [validação](13-validacao-primeira-fatia.md).
+
 Um projeto Rust modular com servidor e worker, sem microserviço por módulo. Não criar traits, camadas ou crates antecipadamente: uma interface só se justifica ao separar uma dependência real.
 
 ```mermaid
