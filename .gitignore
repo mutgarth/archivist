@@ -1,0 +1,24 @@
+# Segredos e configurações locais
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+*.sql.gz
+# Dados e artefatos de execução
+/media/
+/data/
+/backups/
+/models/
+/tmp/
+/target/
+/.local/
+.DS_Store
+
+# Planejamento privado; nunca publicar com git add -f
+/private/
