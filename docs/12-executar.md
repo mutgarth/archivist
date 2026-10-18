@@ -2,7 +2,7 @@
 
 ## 1. Pré-requisitos e configuração
 
-Rust 1.88 ou superior, Python 3, Docker Compose e LM Studio com suporte a visão e embeddings. A API usa PostgreSQL 17 com pgvector, provisionado em um container exclusivo pelo Compose. Escolha portas livres se os padrões já estiverem ocupados.
+Linux, FFmpeg/FFprobe, Rust 1.88 ou superior, Python 3, Docker Compose e LM Studio com suporte a visão e embeddings. A API usa PostgreSQL 17 com pgvector, provisionado em um container exclusivo pelo Compose. Escolha portas livres se os padrões já estiverem ocupados.
 
 Execute `python3 scripts/configure.py` uma vez. Ele cria `.env` e `.env.worker` privados, sem sobrescrever arquivos existentes. A senha do banco e uma credencial interna do worker são geradas aleatoriamente. Ambos os arquivos são ignorados pelo Git.
 
@@ -69,7 +69,7 @@ mkdir -p .local/media/examples
 cp examples/images/*.png .local/media/examples/
 ```
 
-Na interface, clique em **Importar imagens** e informe:
+Na interface, clique em **Importar arquivos** e informe:
 
 ```text
 examples/blue.png
@@ -110,3 +110,5 @@ A busca semântica retorna os vizinhos disponíveis, mesmo com baixa relevância
 Um worker processa uma imagem por vez e renova a lease a cada 30 s. Se morrer, a tarefa pode ser reservada após 120 s. Resultados com lease antiga são rejeitados. Depois de três tentativas, use “Tentar análise novamente”.
 
 Parar os processos não apaga dados. `docker compose -p archivist stop` para o banco preserva o volume. **Não usar down -v em um acervo que precise preservar.** Backup deve incluir mídia gerenciada e banco; restauração e rotina de backup ainda não foram implementadas.
+
+Para vídeos, dependências adicionais, identidade do volume e futura montagem de NAS, consulte [vídeos e armazenamento](14-videos-armazenamento.md).

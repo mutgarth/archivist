@@ -15,6 +15,9 @@ def png(rgb):
  return b"\x89PNG\r\n\x1a\n"+chunk(b"IHDR",struct.pack(">IIBBBBB",32,32,8,2,0,0,0))+chunk(b"IDAT",zlib.compress(b"".join(b"\0"+bytes(rgb)*32 for _ in range(32))))+chunk(b"IEND",b"")
 for n,c in [("red.png",(230,30,30)),("blue.png",(20,60,230))]:(media/n).write_bytes(png(c))
 (media/"link.png").symlink_to(media/"red.png")
+subprocess.run([env.get("FFMPEG_BIN","ffmpeg"),"-v","error","-f","lavfi","-i","color=c=blue:s=320x240:r=24","-t","1","-c:v","libx264","-pix_fmt","yuv420p",str(media/"clip.mp4")],check=True)
+(media.parent/".archivist-volume").write_text("test-volume")
+env["MEDIA_VOLUME_ID"]="test-volume"
 with socket.socket() as s:s.bind(("127.0.0.1",0));port=s.getsockname()[1]
 env.update(DATABASE_URL=env["DATABASE_URL"].rsplit("/",1)[0]+"/"+name,MEDIA_ROOT=str(media.parent),ARCHIVIST_BIND=f"127.0.0.1:{port}",ARCHIVIST_URL=f"http://127.0.0.1:{port}",TEST_DATABASE=name,LMSTUDIO_URL="http://127.0.0.1:1/v1")
 def pg(sql):

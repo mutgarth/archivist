@@ -1,12 +1,12 @@
 # Archivist
 
-Gerenciador de mídia auto-hospedado e multiusuário, com descrição local de imagens e busca semântica.
+Gerenciador de mídia auto-hospedado e multiusuário, com preservação de vídeos originais, descrição local de prévias e busca semântica.
 
-**Primeira fatia experimental implementada:** importar PNG/JPEG/WebP já copiados → gerar prévia → descrever via LM Studio → gerar embedding textual → persistir no PostgreSQL/pgvector → buscar e visualizar → baixar original.
+**Fatia experimental implementada:** importar imagens e vídeos já copiados → preservar original → gerar prévia → descrever via LM Studio → gerar embedding textual → buscar, visualizar e baixar o original. Vídeos têm reprodução por derivado separado; a descrição considera somente um quadro.
 
 ## Executar
 
-Requer Rust 1.88+, Python 3, Docker Compose e [LM Studio](https://lmstudio.ai/docs/developer) com modelos de visão e embedding. A interface é servida pelo próprio binário Rust; não exige Node para uso.
+Requer Linux, FFmpeg/FFprobe com suporte a scale/reset_sar, Rust 1.88+, Python 3, Docker Compose e [LM Studio](https://lmstudio.ai/docs/developer) com modelos de visão e embedding. A interface é servida pelo próprio binário Rust; não exige Node para uso.
 
 ```sh
 git clone https://github.com/mutgarth/archivist.git
@@ -20,16 +20,18 @@ Siga o [guia de execução](docs/12-executar.md) para carregar os modelos, inici
 
 ## O que funciona
 
-- Catálogo compartilhado por contas individuais, com chaves de acesso separadas.
-- Importação explícita de até 20 imagens por lote; confirmação do término da cópia.
+- Catálogo compartilhado sem login, com acesso controlado pela rede privada.
+- Importação explícita de até 20 arquivos por lote; confirmação do término da cópia.
 - PNG, JPEG e WebP até 20 MB e 40 megapixels por imagem.
+- Vídeos MP4/MOV/M4V: cópia verificada por SHA-256, metadados técnicos e reprodução H.264/AAC separada.
+- Identidade de volume para bloquear importações se a futura montagem do NAS estiver ausente ou incorreta.
 - Snapshot estável do original e prévia JPEG, sem depender da IA.
 - Worker separado via API autenticada, fila no PostgreSQL, heartbeat, tentativas limitadas e conclusão idempotente.
 - Descrição local com Gemma 4 E4B e embeddings textuais com EmbeddingGemma pelo LM Studio.
 - Busca híbrida por fusão de rankings textual/vetorial; modo somente texto quando a IA está offline.
 - Visualização, status da análise, tentativa manual após falha e download com Range simples.
 
-O catálogo é compartilhado entre todos os usuários configurados. Não há acervos privados por usuário nesta versão. A quantidade de usuários não é fixada; capacidade ainda não foi medida.
+O catálogo é compartilhado entre as pessoas com acesso à rede do serviço. Não há acervos privados por usuário nesta versão. A quantidade de usuários não é fixada; capacidade ainda não foi medida.
 
 ## Testar
 
@@ -59,3 +61,7 @@ O último comando cria um banco e mídia descartáveis, testa a API com IA propo
 Edição de vídeo fica fora do produto: nenhum corte, timeline ou render de edição. A primeira fatia não instala NAS, não formata discos e não configura backup. Não há benchmark de qualidade ou capacidade; descrições podem errar.
 
 Segredos, dados de execução e material privado ficam fora do Git. Licença de distribuição ainda a definir; visibilidade pública não equivale a uma licença de código aberto.
+
+## Vídeos
+
+MP4, MOV e M4V com original verificado por SHA-256, thumbnail e derivado de reprodução separado. Veja [vídeos e armazenamento](docs/14-videos-armazenamento.md) para configuração, limites e migração futura para uma pasta montada do TrueNAS.

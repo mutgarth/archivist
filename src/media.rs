@@ -19,7 +19,19 @@ pub struct Media {
 pub fn root(path: &str) -> Result<Dir> {
     Ok(Dir::open_ambient_dir(path, ambient_authority())?)
 }
-pub fn read(dir: &Dir, path: &str, internal: bool) -> Result<Vec<u8>> {
+pub fn check_storage() -> Result<()> {
+    if let Ok(expected) = std::env::var("MEDIA_VOLUME_ID") {
+        ensure!(!expected.trim().is_empty(), "empty_volume_id");
+        let dir = root(&std::env::var("MEDIA_ROOT")?)?;
+        ensure!(
+            dir.read_to_string(".archivist-volume")?.trim() == expected,
+            "wrong_storage_volume"
+        );
+    }
+    Ok(())
+}
+pub fn open(dir: &Dir, path: &str, internal: bool) -> Result<cap_std::fs::File> {
+    check_storage()?;
     if !internal {
         crate::domain::validate_relative(path)?;
     }
@@ -31,8 +43,12 @@ pub fn read(dir: &Dir, path: &str, internal: bool) -> Result<Vec<u8>> {
             "symlink"
         );
     }
-    // Capability-relative open prevents a concurrent path swap from escaping the media root.
     let file = dir.open(path)?;
+    ensure!(file.metadata()?.is_file(), "invalid_file");
+    Ok(file)
+}
+pub fn read(dir: &Dir, path: &str, internal: bool) -> Result<Vec<u8>> {
+    let file = open(dir, path, internal)?;
     let before = file.metadata()?;
     ensure!(
         before.is_file() && before.len() <= MAX_BYTES,

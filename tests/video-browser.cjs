@@ -1,0 +1,23 @@
+const {chromium}=require('playwright');
+(async()=>{
+ const browser=await chromium.launch({headless:true});
+ const page=await browser.newPage({viewport:{width:1280,height:900}});
+ const errors=[];page.on('pageerror',e=>errors.push(e.message));
+ await page.goto(process.env.ARCHIVIST_TEST_URL||'http://127.0.0.1:18098');
+ await page.locator('.card[data-mime^="video/"]').first().click();
+ await page.waitForFunction(()=>document.querySelector('#detail-video').readyState>=2,{},{timeout:30000});
+ const video=page.locator('#detail-video');
+ await video.evaluate(async v=>{v.muted=true;await v.play();});
+ await page.waitForFunction(()=>document.querySelector('#detail-video').currentTime>0.2);
+ await video.evaluate(v=>{v.pause();v.currentTime=Math.min(30,v.duration/2);});
+ await page.waitForFunction(()=>!document.querySelector('#detail-video').seeking);
+ const details=await video.evaluate(v=>({duration:v.duration,width:v.videoWidth,height:v.videoHeight,currentTime:v.currentTime,error:v.error?.message||null}));
+ if(details.error||details.width>1280||details.height>720)throw new Error(JSON.stringify(details));
+ await page.setViewportSize({width:390,height:844});
+ if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Horizontal overflow');
+ await page.getByRole('button',{name:'Fechar',exact:true}).click();
+ await page.waitForFunction(()=>{const v=document.querySelector('#detail-video');return v.paused&&!v.getAttribute('src');});
+ if(errors.length)throw new Error(errors.join('\n'));
+ console.log('PASS: video playback, seek, mobile layout and release on close.',details);
+ await browser.close();
+})().catch(e=>{console.error(e);process.exit(1)});

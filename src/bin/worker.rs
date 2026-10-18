@@ -1,5 +1,5 @@
 use anyhow::{Result, ensure};
-use archivist::{ai::Ai, media};
+use archivist::{ai::Ai, media, video};
 use serde::Deserialize;
 use serde_json::json;
 use std::time::Duration;
@@ -11,6 +11,7 @@ struct Job {
     lease_token: String,
     storage_path: String,
     sha256: String,
+    mime: String,
 }
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -48,15 +49,32 @@ async fn main() -> Result<()> {
         let lease = json!({"lease_token":job.lease_token,"attempt":job.attempt});
         let url = format!("{base}/internal/v1/jobs/{}", job.id);
         let result = async {
-            let data = media::read(&root, &job.storage_path, true)?;
-            let image = media::inspect(data)?;
-            ensure!(image.sha256 == job.sha256, "content_changed");
-            let description = ai.describe(&image.preview).await?;
+            let is_video = job.mime.starts_with("video/");
+            let dir = root.try_clone()?;
+            let storage = job.storage_path.clone();
+            let sha = job.sha256.clone();
+            let preview = tokio::task::spawn_blocking(move || -> Result<Vec<u8>> {
+                if is_video {
+                    video::playback(&dir, &storage, &sha)?;
+                    media::read(&dir, &format!(".archivist/previews/{sha}.jpg"), true)
+                } else {
+                    let image = media::inspect(media::read(&dir, &storage, true)?)?;
+                    ensure!(image.sha256 == sha, "content_changed");
+                    Ok(image.preview)
+                }
+            })
+            .await??;
+            let description = ai.describe(&preview).await?;
+            let description = if is_video {
+                format!("Quadro de prévia do vídeo (não representa todas as cenas): {description}")
+            } else {
+                description
+            };
             let embedding = ai.embed(&description, false).await?;
             Ok::<_, anyhow::Error>(
                 json!({"lease_token":job.lease_token,"attempt":job.attempt,"generation":job.generation,
      "description":description,"embedding":embedding,"embedding_model":ai.embedding_version,
-     "vision_model":ai.vision_version,"pipeline_version":"image-v1"}),
+     "vision_model":ai.vision_version,"pipeline_version":if is_video {"video-poster-v1"} else {"image-v1"}}),
             )
         };
         tokio::pin!(result);

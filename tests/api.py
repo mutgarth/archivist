@@ -76,3 +76,56 @@ if os.environ.get("TEST_DATABASE","").startswith("archivist_test_"):
     assert call("/api/v1/imports",body,headers={"Idempotency-Key":str(uuid.uuid4())})[0]==409
     assert call("/api/v1/assets/"+asset+"/original")[0]==200
     print("PASS: expired lease recovery, stale result rejection, retry budget, shared catalog, original stability and text search with AI offline.")
+
+import pathlib
+# A renamed non-video must never become an imported original.
+bad_video=pathlib.Path(os.environ["MEDIA_ROOT"])/"fixtures/invalid.mp4"
+bad_video.write_bytes(b"not a video")
+assert call("/api/v1/imports",{"files":["fixtures/invalid.mp4"],"copy_confirmed":True},headers={"Idempotency-Key":str(uuid.uuid4())})[0]==400
+
+# Videos retain byte-identical originals and expose technical metadata.
+import hashlib,pathlib
+status,video_import=parsed("/api/v1/imports",{"files":["fixtures/clip.mp4"],"copy_confirmed":True},headers={"Idempotency-Key":str(uuid.uuid4())})
+assert status==202,(status,video_import)
+video=video_import["assets"][0]
+metadata=parsed("/api/v1/assets/"+video)[1]
+assert metadata["mime"]=="video/mp4"
+assert metadata["width"]==320 and metadata["height"]==240
+assert float(metadata["media_metadata"]["format"]["duration"])>=1
+original=pathlib.Path(os.environ["MEDIA_ROOT"])/"fixtures/clip.mp4"
+assert hashlib.sha256(call("/api/v1/assets/"+video+"/original")[1]).hexdigest()==hashlib.sha256(original.read_bytes()).hexdigest()
+assert call("/api/v1/assets/"+video+"/preview")[0]==200
+assert call("/api/v1/assets/"+video+"/original",headers={"Range":"bytes=-16"})[1]==original.read_bytes()[-16:]
+assert call("/api/v1/assets/"+video+"/original",headers={"Range":"bytes=8-3"})[0]==416
+# A missing volume marker must stop writes rather than use a fallback directory.
+marker=pathlib.Path(os.environ["MEDIA_ROOT"])/".archivist-volume"
+marker.unlink()
+assert call("/health/ready")[0]==503
+assert call("/api/v1/imports",{"files":["fixtures/clip.mp4"],"copy_confirmed":True},headers={"Idempotency-Key":str(uuid.uuid4())})[0]==503
+marker.write_text("wrong-volume")
+assert call("/health/ready")[0]==503
+marker.write_text("test-volume")
+assert call("/health/ready")[0]==200
+print("PASS: video import, metadata, original hash, preview, ranges and missing/wrong volume protection.")
+
+# Real worker generates a playable proxy even when the AI endpoint is offline.
+import subprocess,time
+worker_env={k:v for k,v in os.environ.items() if k in {
+    "PATH","MEDIA_ROOT","MEDIA_VOLUME_ID","ARCHIVIST_URL","ARCHIVIST_WORKER_TOKEN",
+    "LMSTUDIO_URL","VISION_MODEL","VISION_VERSION","EMBEDDING_MODEL",
+    "EMBEDDING_VERSION","EMBEDDING_DIMENSION","FFMPEG_BIN","FFPROBE_BIN","RUST_LOG"}}
+with (pathlib.Path(os.environ["MEDIA_ROOT"]).parent/"worker.log").open("w") as log:
+    process=subprocess.Popen(["target/debug/worker"],env=worker_env,stdout=log,stderr=log)
+    try:
+        for _ in range(60):
+            status,proxy,headers=call("/api/v1/assets/"+video+"/playback")
+            if status==200:break
+            time.sleep(.5)
+        else:raise AssertionError("Worker did not generate playback")
+        assert headers["Content-Type"]=="video/mp4" and len(proxy)>0
+        assert call("/api/v1/assets/"+video+"/playback",headers={"Range":"bytes=0-15"})[1]==proxy[:16]
+        assert hashlib.sha256(call("/api/v1/assets/"+video+"/original")[1]).hexdigest()==metadata["sha256"]
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+print("PASS: worker playback generation, streaming Range and original unchanged with AI offline.")

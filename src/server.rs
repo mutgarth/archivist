@@ -1,4 +1,4 @@
-use crate::{ai::Ai, media};
+use crate::{ai::Ai, media, video};
 use anyhow::Result;
 use axum::{
     Json, Router,
@@ -66,6 +66,7 @@ fn token_equal(a: &str, b: &str) -> bool {
 }
 
 pub async fn start() -> Result<()> {
+    media::check_storage()?;
     let worker = std::env::var("ARCHIVIST_WORKER_TOKEN")?;
     anyhow::ensure!(worker.len() >= 32, "invalid worker auth config");
     let db = sqlx::postgres::PgPoolOptions::new()
@@ -103,6 +104,7 @@ fn routes(s: App) -> Router {
         .route("/api/v1/assets/{id}", get(detail))
         .route("/api/v1/assets/{id}/preview", get(preview))
         .route("/api/v1/assets/{id}/original", get(original))
+        .route("/api/v1/assets/{id}/playback", get(playback))
         .route("/api/v1/search", post(search))
         .route("/api/v1/jobs/{id}", get(job))
         .route("/api/v1/jobs/{id}/retry", post(retry))
@@ -152,7 +154,7 @@ async fn security_headers(req: Request, next: Next) -> Response {
         ("cache-control", "no-store"),
         (
             "content-security-policy",
-            "default-src 'self'; img-src 'self' blob:; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+            "default-src 'self'; img-src 'self' blob:; media-src 'self'; style-src 'self'; script-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
         ),
     ] {
         r.headers_mut()
@@ -173,7 +175,10 @@ async fn auth(State(s): State<App>, req: Request, next: Next) -> Api<Response> {
     Ok(next.run(req).await)
 }
 async fn ready(State(s): State<App>) -> StatusCode {
-    if sqlx::query("SELECT 1").execute(&s.db).await.is_ok() && s.media.dir_metadata().is_ok() {
+    if media::check_storage().is_ok()
+        && sqlx::query("SELECT 1").execute(&s.db).await.is_ok()
+        && s.media.dir_metadata().is_ok()
+    {
         StatusCode::OK
     } else {
         StatusCode::SERVICE_UNAVAILABLE
@@ -190,6 +195,8 @@ async fn import(
     headers: HeaderMap,
     Json(input): Json<Import>,
 ) -> Api<(StatusCode, Json<Value>)> {
+    media::check_storage()
+        .map_err(|_| Error(StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable"))?;
     if !input.copy_confirmed || input.files.is_empty() || input.files.len() > 20 {
         return Err(bad());
     }
@@ -220,9 +227,8 @@ async fn import(
         let dir = s.media.clone();
         let path = path.clone();
         let entry = tokio::task::spawn_blocking(move || -> Result<_> {
-            let image = media::inspect(media::read(&dir, &path, false)?)?;
-            let storage = media::persist(&dir, &image)?;
-            Ok((path, storage, image))
+            let entry = video::prepare(&dir, &path)?;
+            Ok((path, entry))
         })
         .await
         .map_err(|_| bad())?
@@ -231,7 +237,7 @@ async fn import(
     }
     let mut tx = s.db.begin().await?;
     let mut ids = Vec::new();
-    for (source, storage, image) in prepared {
+    for (source, image) in prepared {
         if let Some(row) =
             sqlx::query("SELECT id,sha256 FROM assets WHERE source_path=$1 FOR UPDATE")
                 .bind(&source)
@@ -245,8 +251,8 @@ async fn import(
             continue;
         }
         let id = Uuid::new_v4();
-        sqlx::query("INSERT INTO assets(id,source_path,storage_path,sha256,mime,bytes,width,height) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
-  .bind(id).bind(source).bind(storage).bind(image.sha256).bind(image.mime).bind(image.bytes.len() as i64).bind(image.width as i32).bind(image.height as i32).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO assets(id,source_path,storage_path,sha256,mime,bytes,width,height,media_metadata) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+  .bind(id).bind(source).bind(image.storage).bind(image.sha256).bind(image.mime).bind(image.bytes as i64).bind(image.width as i32).bind(image.height as i32).bind(image.metadata).execute(&mut *tx).await?;
         sqlx::query("INSERT INTO jobs(id,asset_id) VALUES($1,$2)")
             .bind(Uuid::new_v4())
             .bind(id)
@@ -278,7 +284,7 @@ async fn get_import(State(s): State<App>, Path(id): Path<Uuid>) -> Api<Json<Valu
             .ok_or_else(missing)?,
     ))
 }
-const ASSET_JSON: &str = "jsonb_build_object('id',a.id,'name',a.source_path,'mime',a.mime,'bytes',a.bytes,'width',a.width,'height',a.height,'description',a.description,'vision_model',a.vision_model,'embedding_model',a.embedding_model,'pipeline_version',a.pipeline_version,'job_id',j.id,'status',j.state,'error',j.error)";
+const ASSET_JSON: &str = "jsonb_build_object('id',a.id,'name',a.source_path,'mime',a.mime,'sha256',a.sha256,'media_metadata',a.media_metadata,'bytes',a.bytes,'width',a.width,'height',a.height,'description',a.description,'vision_model',a.vision_model,'embedding_model',a.embedding_model,'pipeline_version',a.pipeline_version,'job_id',j.id,'status',j.state,'error',j.error)";
 #[derive(Deserialize)]
 struct Page {
     limit: Option<i64>,
@@ -341,67 +347,112 @@ async fn preview(State(s): State<App>, Path(id): Path<Uuid>) -> Api<Response> {
     Ok(([(header::CONTENT_TYPE, mime)], bytes).into_response())
 }
 async fn original(State(s): State<App>, Path(id): Path<Uuid>, headers: HeaderMap) -> Api<Response> {
-    let (bytes, mime) = file(&s, id, false).await?;
-    let len = bytes.len();
-    let mut response = if let Some(value) = headers.get(header::RANGE) {
+    stream_file(&s, id, headers, false).await
+}
+async fn playback(State(s): State<App>, Path(id): Path<Uuid>, headers: HeaderMap) -> Api<Response> {
+    stream_file(&s, id, headers, true).await
+}
+async fn stream_file(s: &App, id: Uuid, headers: HeaderMap, playback: bool) -> Api<Response> {
+    use tokio::io::{AsyncReadExt, AsyncSeekExt};
+    media::check_storage()
+        .map_err(|_| Error(StatusCode::SERVICE_UNAVAILABLE, "storage_unavailable"))?;
+    let row = sqlx::query("SELECT storage_path,sha256,mime,source_path FROM assets WHERE id=$1")
+        .bind(id)
+        .fetch_optional(&s.db)
+        .await?
+        .ok_or_else(missing)?;
+    let source: String = row.get("source_path");
+    let mime: String = if playback {
+        "video/mp4".into()
+    } else {
+        row.get("mime")
+    };
+    let path: String = if playback {
+        format!(".archivist/playback/{}.mp4", row.get::<String, _>("sha256"))
+    } else {
+        row.get("storage_path")
+    };
+    let dir = s.media.clone();
+    let file = tokio::task::spawn_blocking(move || media::open(&dir, &path, true))
+        .await
+        .map_err(|_| missing())?
+        .map_err(|_| missing())?;
+    let len = file.metadata().map_err(|_| missing())?.len();
+    if len == 0 {
+        return Err(missing());
+    }
+    let mut file = tokio::fs::File::from_std(file.into_std());
+    let mut start = 0;
+    let mut end = len - 1;
+    let mut status = StatusCode::OK;
+    if let Some(value) = headers.get(header::RANGE) {
+        let invalid = || Error(StatusCode::RANGE_NOT_SATISFIABLE, "invalid_range");
         let range = value
             .to_str()
             .ok()
             .and_then(|v| v.strip_prefix("bytes="))
-            .and_then(|v| v.split_once('-'));
-        let (start, end) = match range {
-            Some(("", suffix)) => {
+            .and_then(|v| v.split_once('-'))
+            .ok_or_else(invalid)?;
+        match range {
+            ("", suffix) => {
                 let n = suffix
-                    .parse::<usize>()
+                    .parse::<u64>()
                     .ok()
                     .filter(|n| *n > 0)
-                    .ok_or(Error(StatusCode::RANGE_NOT_SATISFIABLE, "invalid_range"))?;
-                (len.saturating_sub(n), len - 1)
+                    .ok_or_else(invalid)?;
+                start = len.saturating_sub(n);
             }
-            Some((start, end)) => {
-                let start = start
-                    .parse::<usize>()
-                    .map_err(|_| Error(StatusCode::RANGE_NOT_SATISFIABLE, "invalid_range"))?;
-                let end = if end.is_empty() {
-                    len - 1
-                } else {
-                    end.parse::<usize>()
-                        .map_err(|_| Error(StatusCode::RANGE_NOT_SATISFIABLE, "invalid_range"))?
-                        .min(len - 1)
-                };
-                (start, end)
+            (a, b) => {
+                start = a.parse().map_err(|_| invalid())?;
+                if !b.is_empty() {
+                    end = b.parse::<u64>().map_err(|_| invalid())?.min(len - 1);
+                }
             }
-            None => return Err(Error(StatusCode::RANGE_NOT_SATISFIABLE, "invalid_range")),
-        };
-        if start >= len || end < start {
-            return Err(Error(StatusCode::RANGE_NOT_SATISFIABLE, "invalid_range"));
         }
-        (
-            StatusCode::PARTIAL_CONTENT,
-            [(header::CONTENT_RANGE, format!("bytes {start}-{end}/{len}"))],
-            bytes[start..=end].to_vec(),
-        )
-            .into_response()
-    } else {
-        bytes.into_response()
-    };
-    response
-        .headers_mut()
-        .insert(header::CONTENT_TYPE, mime.parse().map_err(|_| bad())?);
-    response
-        .headers_mut()
-        .insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
-    let extension = match mime.as_str() {
-        "image/png" => "png",
-        "image/webp" => "webp",
-        _ => "jpg",
-    };
-    response.headers_mut().insert(
-        header::CONTENT_DISPOSITION,
-        format!("attachment; filename=\"{id}.{extension}\"")
-            .parse()
-            .map_err(|_| bad())?,
+        if start >= len || end < start {
+            return Err(invalid());
+        }
+        status = StatusCode::PARTIAL_CONTENT;
+    }
+    file.seek(std::io::SeekFrom::Start(start))
+        .await
+        .map_err(|_| missing())?;
+    let body = axum::body::Body::from_stream(tokio_util::io::ReaderStream::new(
+        file.take(end - start + 1),
+    ));
+    let mut response = (status, body).into_response();
+    let h = response.headers_mut();
+    h.insert(header::CONTENT_TYPE, mime.parse().map_err(|_| bad())?);
+    h.insert(
+        header::CONTENT_LENGTH,
+        (end - start + 1).to_string().parse().unwrap(),
     );
+    h.insert(header::ACCEPT_RANGES, "bytes".parse().unwrap());
+    if status == StatusCode::PARTIAL_CONTENT {
+        h.insert(
+            header::CONTENT_RANGE,
+            format!("bytes {start}-{end}/{len}").parse().unwrap(),
+        );
+    }
+    if !playback {
+        let name = source.rsplit('/').next().unwrap_or("original");
+        let encoded: String = name
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"._-".contains(&b) {
+                    (b as char).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        h.insert(
+            header::CONTENT_DISPOSITION,
+            format!("attachment; filename*=UTF-8''{encoded}")
+                .parse()
+                .map_err(|_| bad())?,
+        );
+    }
     Ok(response)
 }
 #[derive(Deserialize)]
@@ -466,7 +517,7 @@ async fn retry(State(s): State<App>, Path(id): Path<Uuid>) -> Api<(StatusCode, J
 }
 async fn reserve(State(s): State<App>) -> Api<Response> {
     sqlx::query("UPDATE jobs SET state='failed',error='attempts_exhausted' WHERE state='running' AND lease_expires_at<now() AND attempt>=3").execute(&s.db).await?;
-    let row:Option<Value>=sqlx::query_scalar("WITH candidate AS (SELECT id FROM jobs WHERE attempt<3 AND ((state='queued' AND available_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs j SET state='running',attempt=attempt+1,lease_token=$1,lease_expires_at=now()+interval '120 seconds' FROM candidate c WHERE j.id=c.id RETURNING j.*) SELECT jsonb_build_object('id',j.id,'asset_id',j.asset_id,'generation',j.generation,'attempt',j.attempt,'lease_token',j.lease_token,'storage_path',a.storage_path,'sha256',a.sha256) FROM claimed j JOIN assets a ON a.id=j.asset_id")
+    let row:Option<Value>=sqlx::query_scalar("WITH candidate AS (SELECT id FROM jobs WHERE attempt<3 AND ((state='queued' AND available_at<=now()) OR (state='running' AND lease_expires_at<now())) ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1), claimed AS (UPDATE jobs j SET state='running',attempt=attempt+1,lease_token=$1,lease_expires_at=now()+interval '120 seconds' FROM candidate c WHERE j.id=c.id RETURNING j.*) SELECT jsonb_build_object('id',j.id,'asset_id',j.asset_id,'generation',j.generation,'attempt',j.attempt,'lease_token',j.lease_token,'storage_path',a.storage_path,'sha256',a.sha256,'mime',a.mime) FROM claimed j JOIN assets a ON a.id=j.asset_id")
  .bind(Uuid::new_v4()).fetch_optional(&s.db).await?;
     Ok(match row {
         Some(value) => Json(value).into_response(),
@@ -512,7 +563,7 @@ async fn complete(
         || v.description.len() > 8000
         || v.embedding_model != s.ai.embedding_version
         || v.vision_model != s.ai.vision_version
-        || v.pipeline_version != "image-v1"
+        || !matches!(v.pipeline_version.as_str(), "image-v1" | "video-poster-v1")
     {
         return Err(bad());
     }
