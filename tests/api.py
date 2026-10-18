@@ -3,10 +3,10 @@ Run before starting a worker. Uses only the standard library and synthetic fixtu
 """
 import json, os, urllib.request, urllib.error, uuid, concurrent.futures
 BASE=os.environ.get("ARCHIVIST_URL","http://127.0.0.1:8098")
-TOKEN=json.loads(os.environ["ARCHIVIST_USERS"])[0]["token"]
 WORKER=os.environ["ARCHIVIST_WORKER_TOKEN"]
-def call(path,body=None,token=TOKEN,headers=None):
-    h={"Authorization":"Bearer "+token, **(headers or {})}
+def call(path,body=None,token=None,headers=None):
+    h=dict(headers or {})
+    if token is not None:h["Authorization"]="Bearer "+token
     if body is not None:h["Content-Type"]="application/json"
     req=urllib.request.Request(BASE+path,json.dumps(body).encode() if body is not None else None,headers=h)
     try:
@@ -16,9 +16,9 @@ def parsed(path,body=None,**kw):
     status,data,_=call(path,body,**kw)
     return status,json.loads(data) if data else None
 assert call("/health/live")[0]==200
-assert call("/api/v1/assets",token="invalid")[0]==401
-assert call("/api/v1/assets",token=WORKER)[0]==401
-assert call("/internal/v1/jobs/reserve",{},token=TOKEN)[0]==401
+assert call("/api/v1/assets")[0]==200
+assert call("/internal/v1/jobs/reserve",{},token="invalid")[0]==401
+assert call("/internal/v1/jobs/reserve",{},token=None)[0]==401
 key=str(uuid.uuid4())
 body={"files":["fixtures/red.png"],"copy_confirmed":True}
 status,imp=parsed("/api/v1/imports",body,headers={"Idempotency-Key":key})
@@ -70,10 +70,9 @@ if os.environ.get("TEST_DATABASE","").startswith("archivist_test_"):
     assert parsed("/api/v1/jobs/"+old["id"])[1]["status"]=="queued"
     assert parsed("/api/v1/search",{"query":"vermelho","mode":"text"})[1]["items"]
     assert call("/api/v1/search",{"query":"azul","mode":"hybrid"})[0]==503
-    other=json.loads(os.environ["ARCHIVIST_USERS"])[1]["token"]
-    assert call("/api/v1/assets/"+asset,token=other)[0]==200
+    assert call("/api/v1/assets/"+asset,token=None)[0]==200
     source=pathlib.Path(os.environ["MEDIA_ROOT"])/"fixtures/red.png"
     source.write_bytes((source.parent/"blue.png").read_bytes())
     assert call("/api/v1/imports",body,headers={"Idempotency-Key":str(uuid.uuid4())})[0]==409
     assert call("/api/v1/assets/"+asset+"/original")[0]==200
-    print("PASS: expired lease recovery, stale result rejection, retry budget, multiuser, original stability and text search with AI offline.")
+    print("PASS: expired lease recovery, stale result rejection, retry budget, shared catalog, original stability and text search with AI offline.")

@@ -4,13 +4,13 @@
 
 - Testes de invariantes: caminhos relativos, rejeição de traversal e vetores inválidos.
 - Teste de regressão: resposta de IA interrompida por limite de tokens não é aceita.
-- Contrato HTTP contra PostgreSQL/pgvector real: autenticação, separação usuário/worker, importação, repetição idempotente, conflito, symlink, prévia e Range.
+- Contrato HTTP contra PostgreSQL/pgvector real: acesso sem login, rejeição de chamadas internas sem credencial do worker, importação, repetição idempotente, conflito, symlink, prévia e Range.
 - Reserva concorrente: apenas uma tentativa obtém a tarefa.
 - Renovação de lease, rejeição de token antigo, recuperação após expiração e limite de tentativas.
 - Resultado com dimensão inválida rejeitado; conclusão válida e sua repetição aceitas; payload divergente rejeitado.
 - Duas contas acessam o catálogo compartilhado; alteração do arquivo de entrada não modifica o snapshot servido.
 - Busca textual e visualização funcionam com endpoint de IA indisponível; busca híbrida informa indisponibilidade.
-- Navegador automatizado: login, busca híbrida, detalhe/prévia, download, logout e viewport móvel sem overflow.
+- Navegador automatizado: acesso direto, importação, busca híbrida, detalhe/prévia, download e viewport móvel sem overflow.
 
 `scripts/test.py` cria um banco exclusivo temporário, inicia servidor, executa `tests/api.py` e remove somente o banco criado pelo teste. Usa vetores sintéticos nas verificações de contrato; não mede qualidade do modelo.
 

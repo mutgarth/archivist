@@ -16,7 +16,7 @@ docker compose -p archivist up -d db
 cargo build --locked --bins
 ```
 
-Siga o [guia de execução](docs/12-executar.md) para carregar os modelos, iniciar servidor/worker, obter a chave individual e importar os exemplos sintéticos. O serviço abre em `http://127.0.0.1:8098`. Em servidor remoto, use túnel SSH ou um proxy HTTPS; não envie chaves por HTTP aberto.
+Siga o [guia de execução](docs/12-executar.md) para carregar os modelos, iniciar servidor/worker, abrir o catálogo e importar os exemplos sintéticos. O serviço abre em `http://127.0.0.1:8098`. Em servidor remoto, use túnel SSH ou acesso restrito pelo Tailscale. O catálogo não exige login; o controle de acesso fica na rede.
 
 ## O que funciona
 

@@ -18,7 +18,7 @@
 | Modelos e versões | Pendente | Validar hardware suportado, português, licenças e consumo |
 | Jev | Posterior | Serviço/contrato e envio externo a esclarecer |
 | Backup | Necessário, pendente | Destino, frequência e restauração real |
-| Autenticação | Pendente antes de implementar API | Contas individuais e worker distinto |
+| Acesso | Aceito | Catálogo sem login pela rede privada; worker com credencial distinta |
 | Derivados do worker | Pendente antes das prévias | Definir transferência limitada e validada ao servidor |
 | Licença do repositório | Pendente | Não assumir licença apenas pela visibilidade pública |
 

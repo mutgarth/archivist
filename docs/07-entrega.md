@@ -14,7 +14,7 @@ Preparar diretórios persistentes e permissões conforme a [implantação](06-in
 
 ## 2. Fechar contratos mínimos
 
-Escolher autenticação individual, confirmar PostgreSQL+pgvector, modelos, limites e entrega de derivados. Definir OpenAPI, migração mínima e fixtures sintéticas. Organizar módulos Rust conforme as dependências reais; não criar microserviços.
+Manter acesso pela rede privada e credencial interna do worker; confirmar PostgreSQL+pgvector, modelos, limites e entrega de derivados. Definir OpenAPI, migração mínima e fixtures sintéticas. Organizar módulos Rust conforme as dependências reais; não criar microserviços.
 
 ## 3. Entregar a primeira fatia completa
 

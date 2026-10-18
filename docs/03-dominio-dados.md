@@ -14,7 +14,7 @@ Não é esquema SQL nem migração aprovada.
 | Tarefa | Operação, alvo, geração, estado, tentativas, lease, heartbeat e erro sanitizado |
 | Coleção | Nome, autoria e relação muitos-para-muitos com assets |
 
-Categorias também são múltiplas por asset. Contas e credenciais são dados de suporte à autenticação, nunca exemplos públicos.
+Categorias também são múltiplas por asset. A credencial interna do worker é configuração privada, nunca um exemplo público.
 
 ## Invariantes
 

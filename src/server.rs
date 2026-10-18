@@ -1,7 +1,7 @@
 use crate::{ai::Ai, media};
 use anyhow::Result;
 use axum::{
-    Extension, Json, Router,
+    Json, Router,
     extract::{DefaultBodyLimit, Path, Query, Request, State},
     http::{HeaderMap, StatusCode, header},
     middleware::{self, Next},
@@ -20,18 +20,10 @@ pub struct App {
     pub db: PgPool,
     pub media: Arc<cap_std::fs::Dir>,
     pub ai: Ai,
-    users: Arc<Vec<User>>,
     worker: String,
     gate: Arc<tokio::sync::Semaphore>,
     search_gate: Arc<tokio::sync::Semaphore>,
 }
-#[derive(Clone, Deserialize)]
-struct User {
-    name: String,
-    token: String,
-}
-#[derive(Clone)]
-struct Actor(String);
 pub struct Error(StatusCode, &'static str);
 impl IntoResponse for Error {
     fn into_response(self) -> Response {
@@ -74,24 +66,8 @@ fn token_equal(a: &str, b: &str) -> bool {
 }
 
 pub async fn start() -> Result<()> {
-    let users: Vec<User> = serde_json::from_str(&std::env::var("ARCHIVIST_USERS")?)?;
     let worker = std::env::var("ARCHIVIST_WORKER_TOKEN")?;
-    anyhow::ensure!(
-        !users.is_empty() && worker.len() >= 32,
-        "invalid auth config"
-    );
-    let mut tokens = std::collections::HashSet::new();
-    let mut names = std::collections::HashSet::new();
-    for u in &users {
-        anyhow::ensure!(
-            !u.name.is_empty()
-                && u.token.len() >= 32
-                && u.token != worker
-                && tokens.insert(&u.token)
-                && names.insert(&u.name),
-            "invalid auth config"
-        );
-    }
+    anyhow::ensure!(worker.len() >= 32, "invalid worker auth config");
     let db = sqlx::postgres::PgPoolOptions::new()
         .max_connections(5)
         .acquire_timeout(Duration::from_secs(5))
@@ -102,7 +78,6 @@ pub async fn start() -> Result<()> {
         db,
         media: Arc::new(media::root(&std::env::var("MEDIA_ROOT")?)?),
         ai: Ai::from_env()?,
-        users: Arc::new(users),
         worker,
         gate: Arc::new(tokio::sync::Semaphore::new(1)),
         search_gate: Arc::new(tokio::sync::Semaphore::new(2)),
@@ -185,24 +160,15 @@ async fn security_headers(req: Request, next: Next) -> Response {
     }
     r
 }
-async fn auth(State(s): State<App>, mut req: Request, next: Next) -> Api<Response> {
+async fn auth(State(s): State<App>, req: Request, next: Next) -> Api<Response> {
     let token = req
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .unwrap_or("");
-    if req.uri().path().starts_with("/internal/") {
-        if !token_equal(token, &s.worker) {
-            return Err(Error(StatusCode::UNAUTHORIZED, "unauthorized"));
-        }
-    } else {
-        let user = s
-            .users
-            .iter()
-            .find(|u| token_equal(token, &u.token))
-            .ok_or(Error(StatusCode::UNAUTHORIZED, "unauthorized"))?;
-        req.extensions_mut().insert(Actor(user.name.clone()));
+    if req.uri().path().starts_with("/internal/") && !token_equal(token, &s.worker) {
+        return Err(Error(StatusCode::UNAUTHORIZED, "unauthorized"));
     }
     Ok(next.run(req).await)
 }
@@ -221,7 +187,6 @@ struct Import {
 }
 async fn import(
     State(s): State<App>,
-    Extension(actor): Extension<Actor>,
     headers: HeaderMap,
     Json(input): Json<Import>,
 ) -> Api<(StatusCode, Json<Value>)> {
@@ -240,7 +205,7 @@ async fn import(
         .map_err(|_| Error(StatusCode::TOO_MANY_REQUESTS, "import_busy"))?;
     if let Some(row) =
         sqlx::query("SELECT request_hash,result FROM imports WHERE actor=$1 AND idempotency_key=$2")
-            .bind(&actor.0)
+            .bind("shared")
             .bind(key)
             .fetch_optional(&s.db)
             .await?
@@ -295,7 +260,7 @@ async fn import(
         "INSERT INTO imports(id,actor,idempotency_key,request_hash,result) VALUES($1,$2,$3,$4,$5)",
     )
     .bind(id)
-    .bind(actor.0)
+    .bind("shared")
     .bind(key)
     .bind(fingerprint)
     .bind(&result)

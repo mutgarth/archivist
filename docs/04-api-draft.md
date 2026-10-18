@@ -2,7 +2,7 @@
 
 > Direção de produto e plano inicial. Para o estado implementado da primeira fatia, consulte [execução](12-executar.md) e [validação](13-validacao-primeira-fatia.md).
 
-Prefixo público `/api/v1`. JSON UTF-8. IDs opacos, datas UTC ISO 8601 e timestamps de mídia em milissegundos. Autenticação individual obrigatória; mecanismo de sessão ainda pendente. Se usar cookies, incluir proteção CSRF. TLS e autorização por recurso mesmo na rede privada.
+Prefixo público `/api/v1`. JSON UTF-8. IDs opacos, datas UTC ISO 8601 e timestamps de mídia em milissegundos. Catálogo compartilhado sem login, acessível somente pela rede privada ou túnel. Rotas internas exigem a credencial do worker.
 
 | Método e rota | Contrato proposto |
 | --- | --- |
@@ -13,7 +13,7 @@ Prefixo público `/api/v1`. JSON UTF-8. IDs opacos, datas UTC ISO 8601 e timesta
 | PATCH /assets/{id} | Somente descrição, transcrição/correções e categorias humanas; revisão via If-Match; 200 e nova revisão |
 | GET /assets/{id}/analyses | Histórico paginado com modelos, versões e gerações |
 | GET /assets/{id}/preview | Prévia segura; 200/206 se disponível, 404 com código preview_unavailable se ausente |
-| GET /assets/{id}/original | Download autenticado; 200 ou 206 para Range válido; 416 para intervalo inválido |
+| GET /assets/{id}/original | Download pela rede privada; 200 ou 206 para Range válido; 416 para intervalo inválido |
 | POST /assets/{id}/analyses | Solicitar tipos permitidos, Idempotency-Key; 202 com job_id |
 | POST /search | query, filtros, limit (1–100), cursor opcional; 200 com hits agrupados por asset e trechos |
 | GET /jobs/{id} | Estado público, tentativas e erro sanitizado, sem lease/segredos |

@@ -1,15 +1,14 @@
 const $=id=>document.getElementById(id);
-let token=sessionStorage.getItem('archivist-token')||'',nextOffset=null,selected=null,urls=[],detailUrl=null,busy=false;
+let nextOffset=null,selected=null,urls=[],detailUrl=null,busy=false;
 const status=message=>{$('status').textContent=message;};
 const labels={queued:'Na fila',running:'Analisando',completed:'Pronta para busca',failed:'Análise falhou'};
 async function api(path,body,extra={}){
- const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{Authorization:'Bearer '+token,...(body===undefined?{}:{'Content-Type':'application/json'}),...extra},body:body===undefined?undefined:JSON.stringify(body)});
+ const r=await fetch(path,{method:body===undefined?'GET':'POST',headers:{...(body===undefined?{}:{'Content-Type':'application/json'}),...extra},body:body===undefined?undefined:JSON.stringify(body)});
  if(!r.ok){let code='Falha na solicitação';try{code=(await r.json()).error?.code||code;}catch{}
- const messages={unauthorized:'Chave inválida ou acesso expirado.',embedding_unavailable_use_text:'Embedding indisponível. Use “Somente texto” ou tente novamente.',invalid_input:'Confira os caminhos, o formato e a confirmação da cópia.',conflict:'Conflito: o arquivo foi alterado ou a operação já mudou de estado.',import_busy:'Outra importação está em andamento. Tente novamente.'};throw new Error(messages[code]||code);}
+ const messages={embedding_unavailable_use_text:'Embedding indisponível. Use “Somente texto” ou tente novamente.',invalid_input:'Confira os caminhos, o formato e a confirmação da cópia.',conflict:'Conflito: o arquivo foi alterado ou a operação já mudou de estado.',import_busy:'Outra importação está em andamento. Tente novamente.'};throw new Error(messages[code]||code);}
  return r;
 }
 async function blob(path){return URL.createObjectURL(await (await api(path)).blob());}
-function loggedIn(value){$('login').hidden=value;$('workspace').hidden=!value;$('logout').hidden=!value;}
 async function render(items,append=false){
  if(!append){urls.forEach(URL.revokeObjectURL);urls=[];$('grid').replaceChildren();}
  for(const asset of items){
@@ -29,7 +28,7 @@ async function load(append=false){
  const query=$('query').value.trim();let data;
  if(query){data=await(await api('/api/v1/search',{query,mode:$('mode').value,limit:50})).json();nextOffset=null;}
  else{data=await(await api('/api/v1/assets?limit=25&offset='+(append?nextOffset||0:0))).json();nextOffset=data.next_offset;}
- await render(data.items,append);$('more').hidden=nextOffset===null;loggedIn(true);
+ await render(data.items,append);$('more').hidden=nextOffset===null;
  }finally{busy=false;}
 }
 async function openDetail(id){
@@ -40,8 +39,6 @@ async function openDetail(id){
  $('detail-meta').textContent=selected.width+' × '+selected.height+' · '+labels[selected.status]+(selected.vision_model?' · '+selected.vision_model:'');
  $('retry').hidden=selected.status!=='failed';$('detail-dialog').showModal();
 }
-$('login-form').addEventListener('submit',async e=>{e.preventDefault();token=$('token').value.trim();try{await load();sessionStorage.setItem('archivist-token',token);$('token').value='';status('');}catch(e){status(e.message);}});
-$('logout').addEventListener('click',()=>{sessionStorage.removeItem('archivist-token');token='';urls.forEach(URL.revokeObjectURL);urls=[];$('grid').replaceChildren();loggedIn(false);status('Sessão encerrada.');});
 $('search-form').addEventListener('submit',e=>{e.preventDefault();load().then(()=>status('')).catch(e=>status(e.message));});
 $('all').addEventListener('click',()=>{$('query').value='';load().catch(e=>status(e.message));});
 $('more').addEventListener('click',()=>load(true).catch(e=>status(e.message)));
@@ -58,5 +55,6 @@ $('import-form').addEventListener('submit',async e=>{
 });
 $('download').addEventListener('click',async()=>{try{const url=await blob('/api/v1/assets/'+selected.id+'/original');const a=document.createElement('a');a.href=url;a.download=selected.name.split('/').pop();a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}catch(e){status(e.message);}});
 $('retry').addEventListener('click',async()=>{try{await api('/api/v1/jobs/'+selected.job_id+'/retry',{});$('detail-dialog').close();status('Nova tentativa agendada.');await load();}catch(e){status(e.message);}});
-if(token)load().catch(e=>{loggedIn(false);status(e.message);});
-setInterval(()=>{if(token&&!$('workspace').hidden&&!$('query').value.trim()&&!$('detail-dialog').open&&!$('import-dialog').open)load().catch(()=>{});},15000);
+sessionStorage.removeItem('archivist-token');
+load().catch(e=>status(e.message));
+setInterval(()=>{if(!$('query').value.trim()&&!$('detail-dialog').open&&!$('import-dialog').open)load().catch(()=>{});},15000);

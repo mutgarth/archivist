@@ -1,14 +1,12 @@
 #!/usr/bin/env python3
 """Create private local settings once; never overwrite an existing .env."""
-import json, secrets, pathlib
+import secrets, pathlib
 root=pathlib.Path(__file__).resolve().parents[1]
 assert not (root/".env").exists() and not (root/".env.worker").exists(), "Configuration already exists; edit it without overwriting credentials"
 password=secrets.token_hex(24)
-users=[{"name":name,"token":secrets.token_hex(32)} for name in ("admin","colaborador")]
 values={
 "POSTGRES_PASSWORD":password,"POSTGRES_PORT":"55439",
 "DATABASE_URL":f"postgres://archivist:{password}@127.0.0.1:55439/archivist",
-"ARCHIVIST_USERS":json.dumps(users,separators=(",",":")),
 "ARCHIVIST_WORKER_TOKEN":secrets.token_hex(32),"MEDIA_ROOT":str(root/".local/media"),
 "ARCHIVIST_BIND":"127.0.0.1:8098","ARCHIVIST_URL":"http://127.0.0.1:8098",
 "LMSTUDIO_URL":"http://127.0.0.1:1234/v1","VISION_MODEL":"archivist-vision",

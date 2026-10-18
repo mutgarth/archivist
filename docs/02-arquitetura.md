@@ -7,7 +7,7 @@ Um projeto Rust modular com servidor e worker, sem microserviço por módulo. N�
 ```mermaid
 flowchart LR
   Clientes[Computadores / cliente SMB] -->|SMB: cópia| Midia[Diretório de mídia]
-  UI[Painel Archivist] -->|HTTPS / conta individual| Server[Servidor Rust]
+  UI[Painel Archivist] -->|rede privada / catálogo compartilhado| Server[Servidor Rust]
   Server --> DB[(PostgreSQL + pgvector)]
   Server --> Midia
   Worker[Worker Ubuntu / GPU] -->|reservar e enviar resultados| Server

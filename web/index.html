@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="pt-BR"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Archivist</title><link rel="stylesheet" href="/style.css"><script src="/app.js" defer></script></head>
-<body><header><a href="/" class="brand">Archivist<span>Catálogo de mídia</span></a><button id="logout" hidden>Sair</button></header>
-<main><section id="login"><p class="eyebrow">SEU ACERVO, POR PERTO</p><h1>Encontre a imagem.<br>Continue a ideia.</h1><p>Organize seus originais e busque pelo que aparece neles.</p><form id="login-form"><label for="token">Chave de acesso individual</label><input id="token" type="password" autocomplete="off" required minlength="32"><button>Entrar no acervo</button></form><p class="hint">Peça sua chave ao administrador. Ela fica somente nesta sessão do navegador.</p></section>
-<section id="workspace" hidden><div class="heading"><div><p class="eyebrow">BIBLIOTECA COMPARTILHADA</p><h1>Seu acervo</h1></div><button id="open-import">Importar imagens</button></div>
+<body><header><a href="/" class="brand">Archivist<span>Catálogo de mídia</span></a><span class="local-note">ACERVO LOCAL</span></header>
+<main>
+<section id="workspace"><div class="heading"><div><p class="eyebrow">BIBLIOTECA COMPARTILHADA</p><h1>Seu acervo.<br>Sempre por perto.</h1><p class="intro">Encontre suas imagens pelo que aparece nelas.<br>Da primeira ideia ao arquivo original.</p></div><button id="open-import">Importar imagens</button></div>
 <form id="search-form"><label for="query">O que você procura?</label><div class="search-row"><input id="query" placeholder="Uma mesa com café, uma paisagem ao entardecer…"><select id="mode" aria-label="Modo de busca"><option value="hybrid">Texto + semântica</option><option value="text">Somente texto</option></select><button>Buscar</button><button type="button" id="all" class="secondary">Ver todos</button></div></form>
 <p id="count" class="hint"></p><div id="grid" class="grid"></div><button id="more" class="secondary" hidden>Carregar mais</button>
 </section><p id="status" role="status" aria-live="polite"></p></main>

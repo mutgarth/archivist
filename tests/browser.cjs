@@ -1,13 +1,10 @@
-// Run with ARCHIVIST_TEST_TOKEN_FILE pointing to a private file; never commit credentials.
 const {chromium}=require('playwright');
-const fs=require('node:fs');
 (async()=>{
  const browser=await chromium.launch({headless:true});
  const page=await browser.newPage({viewport:{width:1280,height:900}});
  const errors=[];page.on('pageerror',e=>errors.push(e.message));
  await page.goto(process.env.ARCHIVIST_TEST_URL||'http://127.0.0.1:18098');
- await page.getByLabel('Chave de acesso individual').fill(fs.readFileSync(process.env.ARCHIVIST_TEST_TOKEN_FILE,'utf8').trim());
- await page.getByRole('button',{name:'Entrar no acervo'}).click();
+ if(await page.locator('input[type=password]').count())throw new Error('Unexpected login');
  await page.locator('#workspace').waitFor({state:'visible'});
  await page.locator('.card').first().waitFor();
  const existingName=await page.locator('.card strong').first().textContent();
@@ -32,9 +29,7 @@ const fs=require('node:fs');
  await page.setViewportSize({width:390,height:844});
  await page.screenshot({path:'/tmp/archivist-mobile.png',fullPage:true});
  if(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth))throw new Error('Horizontal overflow');
- await page.getByRole('button',{name:'Sair',exact:true}).click();
- await page.locator('#login').waitFor({state:'visible'});
  if(errors.length)throw new Error(errors.join('\n'));
  await browser.close();
- console.log('PASS: login, hybrid search, preview, download, mobile layout and logout; no JS errors.');
+ console.log('PASS: direct access, import, hybrid search, preview, download, mobile layout; no JS errors.');
 })().catch(e=>{console.error(e);process.exit(1)});

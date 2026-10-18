@@ -4,11 +4,11 @@
 
 Rust 1.88 ou superior, Python 3, Docker Compose e LM Studio com suporte a visão e embeddings. A API usa PostgreSQL 17 com pgvector, provisionado em um container exclusivo pelo Compose. Escolha portas livres se os padrões já estiverem ocupados.
 
-Execute `python3 scripts/configure.py` uma vez. Ele cria `.env` e `.env.worker` privados, sem sobrescrever arquivos existentes. Chaves diferentes por usuário e uma credencial distinta de worker são geradas aleatoriamente. Ambos os arquivos são ignorados pelo Git.
+Execute `python3 scripts/configure.py` uma vez. Ele cria `.env` e `.env.worker` privados, sem sobrescrever arquivos existentes. A senha do banco e uma credencial interna do worker são geradas aleatoriamente. Ambos os arquivos são ignorados pelo Git.
 
 Configure `MEDIA_ROOT` nos dois arquivos para o mesmo diretório (ou a montagem equivalente no worker). Nesta fatia o worker pode rodar na mesma máquina; em outro host ele precisa ler o mesmo armazenamento. O servidor precisa escrever snapshots/prévias em `MEDIA_ROOT/.archivist`.
 
-`.env.worker` não contém DATABASE_URL, senha do PostgreSQL nem chaves dos usuários. Se mudar o modelo, endpoint ou token do worker, atualize os arquivos correspondentes. Segredos não devem ser passados em URLs.
+`.env.worker` não contém DATABASE_URL, senha do PostgreSQL. Se mudar o modelo, endpoint ou token do worker, atualize os arquivos correspondentes. Segredos não devem ser passados em URLs.
 
 ## 2. LM Studio
 
@@ -56,11 +56,11 @@ set +a
 
 O servidor aplica migrações na inicialização. O worker não acessa o banco. Para uso em máquina compartilhada, execute o worker em sessão/processo que não herde variáveis de banco do terminal do servidor.
 
-Abrir `http://127.0.0.1:8098`. Para um host remoto, use um túnel SSH para essa porta. Em implantação compartilhada, configure HTTPS antes de transmitir chaves de acesso pela rede. Banco e LM Studio ficam em loopback por padrão; nenhuma porta pública é necessária.
+Abrir `http://127.0.0.1:8098`. Para um host remoto, use um túnel SSH para essa porta. Em implantação compartilhada, restrinja o acesso pelo Tailscale; quem alcança o serviço pode consultar e importar imagens. Banco e LM Studio ficam em loopback por padrão; nenhuma porta pública é necessária.
 
-## 4. Entrar e importar
+## 4. Abrir e importar
 
-As chaves de acesso estão em ARCHIVIST_USERS no arquivo privado `.env`. Cada objeto tem nome e token; crie entradas adicionais com chaves aleatórias fortes. Não compartilhar uma mesma chave entre pessoas. Alterações exigem reiniciar o servidor. A interface conserva a chave apenas no sessionStorage e a limpa ao sair.
+O catálogo abre diretamente, sem chave individual ou sessão. O acesso é compartilhado e controlado pela rede privada/túnel. Importações novas usam a identidade compartilhada para idempotência; registros históricos são preservados.
 
 Copie os exemplos sintéticos:
 
@@ -82,7 +82,7 @@ Snapshots duplicam os bytes importados em uma área gerenciada para que alteraç
 
 ## Contrato implementado
 
-Todas as rotas de dados exigem `Authorization: Bearer <chave>`. Usuários compartilham o catálogo; credenciais do worker só acessam rotas internas.
+As rotas `/api/v1` dispensam autenticação. Todas as rotas `/internal/v1` exigem `Authorization: Bearer <ARCHIVIST_WORKER_TOKEN>`. Não publicar o serviço diretamente na internet.
 
 | Rota | Comportamento |
 | --- | --- |
@@ -91,7 +91,7 @@ Todas as rotas de dados exigem `Authorization: Bearer <chave>`. Usuários compar
 | GET /api/v1/assets | limit 1–100, offset >= 0; items e next_offset |
 | GET /api/v1/assets/{id} | Descrição, modelos, dimensões e status/job_id |
 | GET /api/v1/assets/{id}/preview | JPEG gerado sem IA |
-| GET /api/v1/assets/{id}/original | Original; Range simples; download autenticado |
+| GET /api/v1/assets/{id}/original | Original; Range simples; download pela rede privada |
 | POST /api/v1/search | query, limit e mode: hybrid ou text; items ordenados |
 | GET /api/v1/jobs/{id} | Estado, tentativa e erro sanitizado |
 | POST /api/v1/jobs/{id}/retry | Somente tarefa em failed; 202 ou 409 |

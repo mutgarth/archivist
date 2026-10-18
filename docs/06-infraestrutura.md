@@ -16,7 +16,7 @@ Servidor em container, volumes persistentes para mídia e banco, configuração 
 
 TrueNAS é uma opção de host, seguindo [Custom Apps](https://apps.truenas.com/managing-apps/installing-custom-apps/) conforme a versão instalada. Separar painel da aplicação e administração do armazenamento.
 
-Acesso por LAN ou rede privada, opcionalmente [Tailscale](https://tailscale.com/docs/integrations/truenas). Contas individuais e autorização continuam obrigatórias. Não expor banco ou inferência diretamente à internet.
+Acesso por LAN ou rede privada, opcionalmente [Tailscale](https://tailscale.com/docs/integrations/truenas). O catálogo abre sem login; as permissões de rede controlam quem pode acessá-lo. Não expor banco ou inferência diretamente à internet.
 
 ## Preparação do ambiente
 
