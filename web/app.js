@@ -16,9 +16,9 @@ async function render(items,append=false){
  const card=document.createElement('button');card.className='card';card.dataset.name=asset.name;card.dataset.mime=asset.mime;card.type='button';if(asset.match)card.dataset.start=asset.match.start_ms;
  const img=document.createElement('img');img.alt='Prévia de '+asset.name;img.loading='lazy';
  const div=document.createElement('div'),name=document.createElement('strong'),badge=document.createElement('span'),desc=document.createElement('p');
- name.textContent=(asset.mime.startsWith('video/')?'▶ ':'')+asset.name;badge.className='badge';badge.textContent=asset.match?(asset.match.kind==='speech'?'Fala':'Imagem')+' · '+time(asset.match.start_ms):labels[asset.status]||asset.status;
+ name.textContent=(asset.mime.startsWith('video/')?'▶ ':'')+asset.name.split('/').pop();badge.className='badge';badge.textContent=asset.match?(asset.match.kind==='speech'?'Fala':'Imagem')+' · '+time(asset.match.start_ms):labels[asset.status]||asset.status;
  desc.textContent=asset.match?asset.match.text.slice(0,220):asset.description?asset.description.slice(0,150):'O original já está disponível. A descrição será adicionada após a análise.';
- div.append(name,badge,desc);card.append(img,div);card.addEventListener('click',()=>openDetail(asset.id,asset.match?.start_ms??null).catch(e=>status(e.message)));$('grid').append(card);
+ const folder=document.createElement('span');folder.className='folder-tag';folder.textContent=asset.organization?.folder||'A organizar';div.append(name,badge,folder,desc);card.append(img,div);card.addEventListener('click',()=>openDetail(asset.id,asset.match?.start_ms??null).catch(e=>status(e.message)));$('grid').append(card);
  try{const url=await blob('/api/v1/assets/'+asset.id+'/preview');urls.push(url);img.src=url;}catch{img.alt='Prévia indisponível';}
  }
  $('count').textContent=$('grid').children.length?$('grid').children.length+($('query').value.trim()?' resultados exibidos':' arquivos exibidos'):'Nenhum arquivo encontrado. Importe um lote ou tente outra busca.';
@@ -27,8 +27,8 @@ async function load(append=false){
  if(busy)return;busy=true;
  try{
  const query=$('query').value.trim();let data;
- if(query){data=await(await api('/api/v1/search',{query,mode:$('mode').value,limit:50})).json();nextOffset=null;}
- else{data=await(await api('/api/v1/assets?limit=25&offset='+(append?nextOffset||0:0))).json();nextOffset=data.next_offset;}
+ if(query){data=await(await api('/api/v1/search',{query,mode:$('mode').value,limit:50,folder:$('folder').value||null})).json();nextOffset=null;}
+ else{data=await(await api('/api/v1/assets?limit=25&offset='+(append?nextOffset||0:0)+($('folder').value?'&folder='+encodeURIComponent($('folder').value):''))).json();nextOffset=data.next_offset;}
  await render(data.items,append);$('more').hidden=nextOffset===null;
  }finally{busy=false;}
 }
@@ -40,8 +40,9 @@ async function openDetail(id,at=null){
  $('detail-video').hidden=!isVideo;$('video-note').hidden=!isVideo;$('detail-image').hidden=isVideo;
  $('detail-video').removeAttribute('src');
  if(isVideo){$('video-note').textContent='Prévia reduzida para reprodução. O download preserva o original integral. A busca combina quadros amostrados e fala transcrita; timestamps são aproximados.';$('detail-video').poster=detailUrl;$('detail-video').src='/api/v1/assets/'+id+'/playback';}
- $('detail-name').textContent=selected.name;$('detail-description').textContent=selected.description||'Análise ainda não concluída.';
+ $('detail-name').textContent=selected.name.split('/').pop();$('detail-description').textContent=selected.description||'Análise ainda não concluída.';
  $('detail-meta').textContent=selected.width+' × '+selected.height+' · '+labels[selected.status]+(selected.mime.startsWith('video/')?' · '+Math.round(Number(selected.media_metadata?.format?.duration||0))+' s · '+(selected.bytes/1e9).toFixed(2)+' GB':'')+(selected.vision_model?' · '+selected.vision_model:'');
+ $('detail-organization').textContent=selected.organization?'Pasta virtual: '+selected.organization.folder+' · '+selected.organization.tags.join(', ')+' — '+selected.organization.reason:'Organização automática pendente da análise.';
  $('detail-integrity').textContent='SHA-256 do original: '+selected.sha256;
  if(isVideo){const stream=selected.media_metadata?.streams?.find(s=>s.codec_type==='video');if(stream)$('detail-meta').textContent+=' · '+stream.codec_name+' · '+stream.r_frame_rate+' fps';}
  $('retry').hidden=selected.status!=='failed';$('reanalyze').hidden=!isVideo||selected.status!=='completed';
@@ -53,7 +54,7 @@ async function openDetail(id,at=null){
 
 }
 $('search-form').addEventListener('submit',e=>{e.preventDefault();load().then(()=>status('')).catch(e=>status(e.message));});
-$('all').addEventListener('click',()=>{$('query').value='';load().catch(e=>status(e.message));});
+$('all').addEventListener('click',()=>{$('query').value='';$('folder').value='';load().catch(e=>status(e.message));});
 $('more').addEventListener('click',()=>load(true).catch(e=>status(e.message)));
 $('open-import').addEventListener('click',()=>$('import-dialog').showModal());
 $('close-import').addEventListener('click',()=>$('import-dialog').close());
@@ -97,3 +98,17 @@ $('reanalyze').addEventListener('click',async()=>{
  try{await api('/api/v1/assets/'+selected.id+'/reanalyze',{});$('detail-dialog').close();status('Análise temporal agendada. A versão anterior permanece disponível até a conclusão.');await load();}
  catch(e){status(e.message);}finally{button.disabled=false;}
 });
+
+async function refreshOrganization(){
+ const [folders,automation]=await Promise.all([api('/api/v1/folders').then(r=>r.json()),api('/api/v1/automation').then(r=>r.json())]);
+ const current=$('folder').value;
+ $('folder').replaceChildren(new Option('Todas as pastas',''));
+ for(const folder of folders.items)$('folder').append(new Option(folder.name+' ('+folder.count+')',folder.name));
+ if([...$('folder').options].some(o=>o.value===current))$('folder').value=current;
+ const phase=automation.phase;
+ $('automation-note').textContent=!automation.online?'Monitor automático desconectado.':phase==='retrying'||phase==='storage_unavailable'?'Monitor aguardando armazenamento ou serviço.':phase==='classifying'?'Organizando o acervo com IA local…':'Importação automática ativa · '+(automation.pending||0)+' aguardando a cópia estabilizar.';
+ if(automation.online&&automation.errors)$('automation-note').textContent+=' Algumas operações falharam e serão tentadas novamente.';
+}
+$('folder').addEventListener('change',()=>load().catch(e=>status(e.message)));
+refreshOrganization().catch(()=>{$('automation-note').textContent='Estado do monitor indisponível.';});
+setInterval(()=>refreshOrganization().catch(()=>{}),15000);

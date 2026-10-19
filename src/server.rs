@@ -101,6 +101,10 @@ fn routes(s: App) -> Router {
         .route("/api/v1/imports", post(import))
         .route("/api/v1/imports/{id}", get(get_import))
         .route("/api/v1/assets", get(list))
+        .route("/api/v1/folders", get(folders))
+        .route("/api/v1/automation", get(automation_status))
+        .route("/internal/v1/automation", post(update_automation))
+        .route("/internal/v1/assets/{id}/organization", post(organize))
         .route("/api/v1/assets/{id}", get(detail))
         .route("/api/v1/assets/{id}/preview", get(preview))
         .route("/api/v1/assets/{id}/original", get(original))
@@ -289,21 +293,23 @@ async fn get_import(State(s): State<App>, Path(id): Path<Uuid>) -> Api<Json<Valu
             .ok_or_else(missing)?,
     ))
 }
-const ASSET_JSON: &str = "jsonb_build_object('id',a.id,'name',a.source_path,'mime',a.mime,'sha256',a.sha256,'media_metadata',a.media_metadata,'bytes',a.bytes,'width',a.width,'height',a.height,'description',a.description,'vision_model',a.vision_model,'embedding_model',a.embedding_model,'pipeline_version',a.pipeline_version,'transcription_model',a.transcription_model,'job_id',j.id,'status',j.state,'error',j.error)";
+const ASSET_JSON: &str = "jsonb_build_object('id',a.id,'name',a.source_path,'mime',a.mime,'sha256',a.sha256,'media_metadata',a.media_metadata,'bytes',a.bytes,'width',a.width,'height',a.height,'description',a.description,'vision_model',a.vision_model,'embedding_model',a.embedding_model,'pipeline_version',a.pipeline_version,'transcription_model',a.transcription_model,'organization',a.organization,'analysis_hash',j.result_hash,'job_id',j.id,'status',j.state,'error',j.error)";
 #[derive(Deserialize)]
 struct Page {
     limit: Option<i64>,
     offset: Option<i64>,
+    folder: Option<String>,
 }
 async fn list(State(s): State<App>, Query(p): Query<Page>) -> Api<Json<Value>> {
     let limit = p.limit.unwrap_or(25).clamp(1, 100);
     let offset = p.offset.unwrap_or(0).max(0);
     let query = format!(
-        "SELECT {ASSET_JSON} FROM assets a JOIN jobs j ON j.asset_id=a.id ORDER BY a.created_at DESC,a.id LIMIT $1 OFFSET $2"
+        "SELECT {ASSET_JSON} FROM assets a JOIN jobs j ON j.asset_id=a.id WHERE ($3::text IS NULL OR a.organization->>'folder'=$3) ORDER BY a.created_at DESC,a.id LIMIT $1 OFFSET $2"
     );
     let items: Vec<Value> = sqlx::query_scalar(&query)
         .bind(limit)
         .bind(offset)
+        .bind(p.folder)
         .fetch_all(&s.db)
         .await?;
     let next = if items.len() == limit as usize {
@@ -466,6 +472,7 @@ struct Search {
     query: String,
     limit: Option<i64>,
     mode: Option<String>,
+    folder: Option<String>,
 }
 async fn search(State(s): State<App>, Json(input): Json<Search>) -> Api<Json<Value>> {
     let text = input.query.trim();
@@ -495,9 +502,9 @@ async fn search(State(s): State<App>, Json(input): Json<Search>) -> Api<Json<Val
     };
     let q=format!("WITH documents AS (
         SELECT a.id AS key,a.id AS asset_id,NULL::text AS kind,NULL::bigint AS start_ms,NULL::bigint AS end_ms,coalesce(a.description,'') AS excerpt,a.source_path||' '||coalesce(a.description,'') AS body,a.embedding,a.embedding_model
-        FROM assets a WHERE NOT EXISTS(SELECT 1 FROM asset_segments seg WHERE seg.asset_id=a.id)
+        FROM assets a WHERE ($5::text IS NULL OR a.organization->>'folder'=$5) AND NOT EXISTS(SELECT 1 FROM asset_segments seg WHERE seg.asset_id=a.id)
         UNION ALL
-        SELECT seg.id,seg.asset_id,seg.kind,seg.start_ms,seg.end_ms,seg.text,a.source_path||' '||seg.text,seg.embedding,seg.embedding_model FROM asset_segments seg JOIN assets a ON a.id=seg.asset_id
+        SELECT seg.id,seg.asset_id,seg.kind,seg.start_ms,seg.end_ms,seg.text,a.source_path||' '||seg.text,seg.embedding,seg.embedding_model FROM asset_segments seg JOIN assets a ON a.id=seg.asset_id WHERE ($5::text IS NULL OR a.organization->>'folder'=$5)
     ), lexical AS (
         SELECT key,row_number() OVER(ORDER BY ts_rank_cd(to_tsvector('portuguese',body),plainto_tsquery('portuguese',$3)) DESC,key) AS rank
         FROM documents WHERE to_tsvector('portuguese',body) @@ plainto_tsquery('portuguese',$3)
@@ -510,12 +517,13 @@ async fn search(State(s): State<App>, Json(input): Json<Search>) -> Api<Json<Val
     )
     SELECT {ASSET_JSON} || jsonb_build_object('score',ranked.score,'match',CASE WHEN ranked.kind IS NULL THEN NULL ELSE jsonb_build_object('kind',ranked.kind,'start_ms',ranked.start_ms,'end_ms',ranked.end_ms,'text',ranked.excerpt) END)
     FROM ranked JOIN assets a ON a.id=ranked.asset_id JOIN jobs j ON j.asset_id=a.id
-    WHERE ranked.asset_rank<=3 ORDER BY ranked.score DESC,a.id,ranked.start_ms NULLS FIRST LIMIT $4");
+    WHERE ranked.asset_rank<=3 AND ($5::text IS NULL OR a.organization->>'folder'=$5) ORDER BY ranked.score DESC,a.id,ranked.start_ms NULLS FIRST LIMIT $4");
     let items: Vec<Value> = sqlx::query_scalar(&q)
         .bind(vector)
         .bind(&s.ai.embedding_version)
         .bind(text)
         .bind(limit)
+        .bind(input.folder)
         .fetch_all(&s.db)
         .await?;
     Ok(Json(json!({"items":items,"mode":mode})))
@@ -708,4 +716,47 @@ async fn reanalyze(State(s): State<App>, Path(id): Path<Uuid>) -> Api<(StatusCod
         return Err(conflict());
     }
     Ok((StatusCode::ACCEPTED, Json(json!({"status":"queued"}))))
+}
+
+async fn folders(State(s): State<App>) -> Api<Json<Value>> {
+    let items: Vec<Value> = sqlx::query_scalar("SELECT jsonb_build_object('name',organization->>'folder','count',count(*)) FROM assets WHERE organization IS NOT NULL GROUP BY organization->>'folder' ORDER BY organization->>'folder'").fetch_all(&s.db).await?;
+    Ok(Json(json!({"items":items})))
+}
+async fn organize(
+    State(s): State<App>,
+    Path(id): Path<Uuid>,
+    Json(input): Json<crate::organization::Organization>,
+) -> Api<Json<Value>> {
+    input.validate().map_err(|_| bad())?;
+    let body = serde_json::to_value(&input).map_err(|_| bad())?;
+    let n=sqlx::query("UPDATE assets a SET organization=$2 WHERE a.id=$1 AND EXISTS(SELECT 1 FROM jobs j WHERE j.asset_id=a.id AND j.state='completed' AND j.result_hash=$3)").bind(id).bind(body).bind(&input.analysis_hash).execute(&s.db).await?.rows_affected();
+    if n == 0 {
+        return Err(conflict());
+    }
+    Ok(Json(json!({"status":"organized"})))
+}
+async fn automation_status(State(s): State<App>) -> Api<Json<Value>> {
+    let value: Option<Value> = sqlx::query_scalar("SELECT body || jsonb_build_object('updated_at',updated_at,'online',updated_at > now()-interval '15 minutes') FROM automation_status WHERE id=true").fetch_optional(&s.db).await?;
+    Ok(Json(value.unwrap_or(json!({"online":false}))))
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct AutomationStatus {
+    pending: u32,
+    imported: u32,
+    duplicates: u32,
+    errors: u32,
+    phase: String,
+}
+async fn update_automation(
+    State(s): State<App>,
+    Json(input): Json<AutomationStatus>,
+) -> Api<Json<Value>> {
+    if !["watching", "classifying", "storage_unavailable", "retrying"]
+        .contains(&input.phase.as_str())
+    {
+        return Err(bad());
+    }
+    sqlx::query("INSERT INTO automation_status(id,body) VALUES(true,$1) ON CONFLICT(id) DO UPDATE SET body=EXCLUDED.body,updated_at=now()").bind(serde_json::to_value(input).map_err(|_|bad())?).execute(&s.db).await?;
+    Ok(Json(json!({"status":"ok"})))
 }

@@ -69,3 +69,7 @@ MP4, MOV e M4V com original verificado por SHA-256, thumbnail e derivado de repr
 ## Busca por trechos
 
 Quadros amostrados e fala transcrita recebem timestamps e embeddings próprios. Os resultados abrem a prévia no ponto encontrado. Consulte [análise temporal](docs/15-analise-temporal.md) para configurar o Whisper, reanalisar vídeos existentes e conhecer limites.
+
+## Importação automática e pastas virtuais
+
+O monitor importa vídeos e imagens estáveis de pastas configuradas, evita duplicatas por hash e organiza os itens em pastas virtuais com um modelo local do LM Studio. Os arquivos de origem permanecem intactos. Veja [configuração, limites e testes](docs/16-importacao-pastas.md).

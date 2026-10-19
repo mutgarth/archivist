@@ -47,6 +47,23 @@ assert call("/internal/v1/jobs/"+job["id"]+"/complete",result,token=WORKER)[0]==
 assert call("/internal/v1/jobs/"+job["id"]+"/complete",result,token=WORKER)[0]==200
 assert call("/internal/v1/jobs/"+job["id"]+"/complete",{**result,"description":"outro"},token=WORKER)[0]==409
 assert parsed("/api/v1/assets/"+asset)[1]["description"]==result["description"]
+# Virtual folders are validated metadata; stale classifications cannot overwrite new analysis.
+organization={"folder":"Objetos e documentos","tags":["vermelho"],"reason":"Imagem sintética vermelha.","confidence":.9,"model":"test-local","version":"folders-v1","analysis_hash":parsed("/api/v1/assets/"+asset)[1]["analysis_hash"]}
+endpoint="/internal/v1/assets/"+asset+"/organization"
+assert call(endpoint,organization)[0]==401
+assert call(endpoint,{**organization,"folder":"../escape"},token=WORKER)[0]==400
+assert call(endpoint,{**organization,"analysis_hash":"0"*64},token=WORKER)[0]==409
+assert call(endpoint,organization,token=WORKER)[0]==200
+from urllib.parse import quote
+folder=quote(organization["folder"])
+assert parsed("/api/v1/assets?folder="+folder)[1]["items"][0]["id"]==asset
+assert parsed("/api/v1/assets?folder=Animais")[1]["items"]==[]
+assert parsed("/api/v1/folders")[1]["items"][0]["count"]==1
+assert parsed("/api/v1/search",{"query":"vermelho","mode":"text","folder":"Animais"})[1]["items"]==[]
+assert call("/internal/v1/automation",{"pending":0,"imported":0,"duplicates":0,"errors":0,"phase":"watching"},token=WORKER)[0]==200
+assert parsed("/api/v1/automation")[1]["online"] is True
+print("PASS: virtual folders, filters, internal auth and stale-classification rejection.")
+
 assert call("/api/v1/jobs/"+job["id"]+"/retry",{})[0]==409
 print("PASS: auth, import, idempotency, traversal, symlink, preview, Range, reservation, lease, vector validation, atomic completion.")
 
@@ -161,3 +178,27 @@ with (pathlib.Path(os.environ["MEDIA_ROOT"]).parent/"worker.log").open("w") as l
         process.terminate()
         process.wait(timeout=10)
 print("PASS: worker playback generation, streaming Range and original unchanged with AI offline.")
+
+# Automatic import against the real API: no explicit import call by the operator.
+import sys
+sys.path.insert(0,str(pathlib.Path(__file__).resolve().parents[1]/"scripts"))
+from automation import Automation
+watch=pathlib.Path(os.environ["MEDIA_ROOT"]).parent/"watch";watch.mkdir()
+# Existing video is detected as a duplicate even under a new name.
+(watch/"renamed.mp4").write_bytes(original.read_bytes())
+config={"roots":[str(watch)],"state_path":str(watch.parent/"auto.sqlite"),"settle_seconds":0}
+auto=Automation(config)
+items=auto.catalog();before=len(items)
+auto.scan(items);auto.scan(items)
+assert len(auto.catalog())==before and auto.counts["duplicates"]==1
+# A new byte-distinct valid PNG is ingested, with a byte-identical original.
+new_image=watch/"new.png"
+new_image.write_bytes((pathlib.Path(os.environ["MEDIA_ROOT"])/"fixtures/red.png").read_bytes()+b"synthetic-test")
+auto.scan(auto.catalog());auto.scan(auto.catalog())
+items=auto.catalog();assert len(items)==before+1
+new_asset=next(x for x in items if x["sha256"]==hashlib.sha256(new_image.read_bytes()).hexdigest())
+assert call("/api/v1/assets/"+new_asset["id"]+"/original")[1]==new_image.read_bytes()
+auto.db.close();auto=Automation(config);auto.scan(auto.catalog())
+assert len(auto.catalog())==before+1
+auto.db.close()
+print("PASS: automatic import, byte preservation, hash deduplication and restart recovery.")
