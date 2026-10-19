@@ -1,5 +1,7 @@
 import importlib.util
 import json
+import io
+import sqlite3
 import os
 from pathlib import Path
 import tempfile
@@ -11,6 +13,52 @@ spec=importlib.util.spec_from_file_location('automation',Path(__file__).resolve(
 a=importlib.util.module_from_spec(spec);spec.loader.exec_module(a)
 
 class AutomationTests(unittest.TestCase):
+ def test_decision_distribution_and_uncertainty(self):
+  probabilities={f:0.0 for f in a.FOLDERS};probabilities['Animais']=1.0
+  answer={'type':'choice','choice':'Animais','confidence':.9,'probabilities':probabilities}
+  response={'answers':{'folder':answer}}
+  self.assertEqual(a.parse_decision(response)['folder'],'Animais')
+  answer['confidence']=.4
+  self.assertEqual(a.parse_decision(response)['folder'],'Revisar')
+  for invalid in (float('nan'),float('inf'),True,-1,2):
+   answer['confidence']=invalid
+   with self.assertRaises(ValueError):a.parse_decision(response)
+  answer['confidence']=.9;answer['choice']='../../source'
+  with self.assertRaises(ValueError):a.parse_decision(response)
+  answer['choice']='Comida e cozinha'
+  with self.assertRaises(ValueError):a.parse_decision(response)
+  answer['choice']='Animais';probabilities['Animais']=.7
+  with self.assertRaises(ValueError):a.parse_decision(response)
+  probabilities['Animais']=1.;del probabilities['Revisar']
+  with self.assertRaises(ValueError):a.parse_decision(response)
+ def test_decision_payload_contains_described_choices(self):
+  payload=a.decision_payload('local-decision','untrusted evidence')
+  self.assertEqual(payload['state'],'untrusted evidence')
+  self.assertEqual(set(payload['questions']['folder']['criteria']),set(a.FOLDERS))
+  self.assertTrue(all(payload['questions']['folder']['criteria'].values()))
+  self.assertNotIn('messages',payload)
+ def test_systemone_classification_persists_and_retries_invalid_response(self):
+  worker=a.Automation.__new__(a.Automation)
+  worker.model='decision';worker.model_version='decision-q8-v1';worker.decision_mode='systemone';worker.decision_minimum=.65
+  worker.db=sqlite3.connect(':memory:')
+  worker.db.execute('CREATE TABLE retries(asset TEXT PRIMARY KEY,retry_at REAL)')
+  worker.db.execute('CREATE TABLE decisions(asset TEXT,analysis_hash TEXT,model TEXT,response TEXT,elapsed_ms REAL,created_at REAL)')
+  worker.counts={'errors':0};worker.report=lambda phase:None
+  writes=[];worker.internal=lambda path,body:writes.append(body)
+  asset={'id':'one','status':'completed','analysis_hash':'a'*64,'mime':'image/png','description':'Gato'}
+  probabilities={f:float(f=='Animais') for f in a.FOLDERS}
+  response={'answers':{'folder':{'type':'choice','choice':'Animais','confidence':.9,'probabilities':probabilities}}}
+  with patch.dict(os.environ,{'LMSTUDIO_URL':'http://localhost:1234/v1'}):
+   with patch.object(a.urllib.request,'urlopen',return_value=io.BytesIO(json.dumps(response).encode())) as request:
+    worker.classify([asset])
+    self.assertTrue(request.call_args.args[0].full_url.endswith('/v1/systemone'))
+   self.assertEqual(writes[0]['folder'],'Animais')
+   self.assertEqual(worker.db.execute('SELECT COUNT(*) FROM decisions').fetchone()[0],1)
+   with patch.object(a.urllib.request,'urlopen',return_value=io.BytesIO(b'{}')):
+    worker.classify([asset])
+   self.assertEqual(len(writes),1)
+   self.assertGreater(worker.db.execute('SELECT retry_at FROM retries').fetchone()[0],time.time())
+  worker.db.close()
  def test_stability_restarts_when_upload_changes(self):
   s=a.Stability(30);signature=(5,1,1,1)
   self.assertFalse(s.ready(Path('x'),signature,0))
