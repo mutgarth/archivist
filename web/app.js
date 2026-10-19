@@ -1,5 +1,5 @@
 const $=id=>document.getElementById(id);
-let nextOffset=null,selected=null,urls=[],detailUrl=null,busy=false,segments=[];
+let nextOffset=null,selected=null,urls=[],detailUrl=null,busy=false,segments=[],reloadRequested=false;
 const status=message=>{$('status').textContent=message;};
 const time=ms=>{const s=Math.floor(ms/1000);return String(Math.floor(s/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0');};
 const labels={queued:'Na fila',running:'Analisando',completed:'Pronta para busca',failed:'Análise falhou'};
@@ -24,13 +24,13 @@ async function render(items,append=false){
  $('count').textContent=$('grid').children.length?$('grid').children.length+($('query').value.trim()?' resultados exibidos':' arquivos exibidos'):'Nenhum arquivo encontrado. Importe um lote ou tente outra busca.';
 }
 async function load(append=false){
- if(busy)return;busy=true;
+ if(busy){if(!append)reloadRequested=true;return;}busy=true;
  try{
  const query=$('query').value.trim();let data;
  if(query){data=await(await api('/api/v1/search',{query,mode:$('mode').value,limit:50,folder:$('folder').value||null})).json();nextOffset=null;}
  else{data=await(await api('/api/v1/assets?limit=25&offset='+(append?nextOffset||0:0)+($('folder').value?'&folder='+encodeURIComponent($('folder').value):''))).json();nextOffset=data.next_offset;}
  await render(data.items,append);$('more').hidden=nextOffset===null;
- }finally{busy=false;}
+ }finally{busy=false;if(reloadRequested){reloadRequested=false;queueMicrotask(()=>load().catch(e=>status(e.message)));}}
 }
 async function openDetail(id,at=null){
  selected=await(await api('/api/v1/assets/'+id)).json();
